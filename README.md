@@ -4,7 +4,7 @@
 The general idea is to produce a clinical reports from chest x-ray images with human scores.  
 ## Pipeline-
 
-$\bullet$ We train the baseline LLM with the file mimic_train.sh.
+$\bullet$ We train the baseline LLM with the file mimic_train.sh. The codes are provided in the trainer.py file.
 
 $\bullet$ Once trained, we train our surrogate model (a regression model) based on the latent distribution of the trained data and the corresponding information scores. The codes for training the surrogate is provided in the tester.py files. 
 
@@ -15,4 +15,6 @@ L_{hdm} = CE_{LLM}+\lambda*I, \text{where I is the mean information score obtain
 $$
 
 The codes for finetuning is provided in the finetuner_train.py file. 
+
+$\bullet$ For final testing, please run mimic_surr.sh file and the codes are provided in surrogate_tester.py file. 
 
