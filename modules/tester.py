@@ -92,52 +92,48 @@ class Tester(BaseTester):
         log = dict()
         
         self.model.eval()
-        #with torch.no_grad():
-        img_ids, gumbel_log_probs, test_gts, test_res, weights = [], [], [], [], []
-        count=0
-        print('number of iterations required:', len(self.test_dataloader)) #for ground truth surrogate, we use train_dataloader
-        for batch_idx, (images_id, images, reports_ids, reports_masks) in tqdm(enumerate(self.train_dataloader)):
-            images, reports_ids, reports_masks = images.to(self.device), reports_ids.to(
-                self.device), reports_masks.to(self.device)
+        with torch.no_grad():
+            img_ids, latent_rep_check, test_gts, test_res, weights = [], [], [], [], []
+            count=0
+            print('number of iterations required:', len(self.test_dataloader)) #for ground truth surrogate, we use train_dataloader
+            for batch_idx, (images_id, images, reports_ids, reports_masks) in tqdm(enumerate(self.train_dataloader)):
+                images, reports_ids, reports_masks = images.to(self.device), reports_ids.to(
+                    self.device), reports_masks.to(self.device)
 
-            seq, seq_logprobs = self.model(images, mode='sample')
-            print('seq: ', seq)
-            print('seq size: ', seq.size())
-            print('seq logprobs: ', seq_logprobs)
-            print('seq logps size: ', seq_logprobs.size())
-            #max_indices = np.argmax(seq_logprobs, axis=(1, 2))
-            #latent= torch.split(latent_rep, split_size_or_sections=1, dim=0)
-            reports = self.model.tokenizer.decode_batch(seq.cpu().numpy())
-            print('reports: ', reports)
-            list_of_rep = [[item] for item in reports]
-            
-            ground_truths = self.model.tokenizer.decode_batch(reports_ids[:, 1:].cpu().numpy())
-            list_of_gt = [[item] for item in ground_truths]
-            
-            bleu_score, bleu_score_ind = self.metric_ftns({i: [gt] for i, gt in enumerate(ground_truths)},
-                                    {i: [re] for i, re in enumerate(reports)})
-            #print('bleu score', bleu_score_ind)
-            wts=bleu_score_ind['BLEU_4']
-            #print('wts: ', wts)
-            weights.extend(wts) #let's try with inverted blue1
-            
-            #print('mean_weights ',mean_weights)
-            test_res.extend(reports)
-            test_gts.extend(ground_truths)
-            gumbel_log_probs.extend(seq_logprobs)
-            img_ids.extend(list(images_id))
-            count+=1
-            #print('latent_rep', latent_rep)
-            #with open("file.txt", "w") as output_text:
-                #output_text.write(str(test_res))
-            
-            #if count == 2: # this needs to be user defined
-                #break
-        tensor_dict = dict(zip(img_ids, gumbel_log_probs))
+                latent, seq = self.model(images, mode='sample')
+                #max_indices = np.argmax(seq_logprobs, axis=(1, 2))
+                #latent= torch.split(latent_rep, split_size_or_sections=1, dim=0)
+                reports = self.model.tokenizer.decode_batch(seq.cpu().numpy())
+                #print('reports: ', reports)
+                list_of_rep = [[item] for item in reports]
+                
+                ground_truths = self.model.tokenizer.decode_batch(reports_ids[:, 1:].cpu().numpy())
+                list_of_gt = [[item] for item in ground_truths]
+                
+                bleu_score, bleu_score_ind = self.metric_ftns({i: [gt] for i, gt in enumerate(ground_truths)},
+                                        {i: [re] for i, re in enumerate(reports)})
+                #print('bleu score', bleu_score_ind)
+                wts=bleu_score_ind['BLEU_4']
+                #print('wts: ', wts)
+                weights.extend(wts) #let's try with inverted blue1
+                
+                #print('mean_weights ',mean_weights)
+                test_res.extend(reports)
+                test_gts.extend(ground_truths)
+                latent_rep_check.extend(latent)
+                img_ids.extend(list(images_id))
+                count+=1
+                #print('latent_rep', latent_rep)
+                #with open("file.txt", "w") as output_text:
+                    #output_text.write(str(test_res))
+                
+                #if count == 2: # this needs to be user defined
+                  #  break
+        tensor_dict = dict(zip(img_ids, latent_rep_check))
         weight_dict = dict(zip(img_ids, weights))
         # Save the dictionary
-        torch.save(tensor_dict, 'tensor_dict_r1_more_data.pt')
-        torch.save(weight_dict, 'all_weights_only_find.pt')
+        #torch.save(tensor_dict, 'tensor_dict_r1_more_data.pt')
+        #torch.save(weight_dict, 'all_weights_only_find.pt')
         #torch.save(test_res, 'pred_rep_only_find.pt')
         #print('length of dict: ', len(tensor_dict))
         #print('tensor dict: ',tensor_dict)
@@ -145,17 +141,17 @@ class Tester(BaseTester):
                                     {i: [re] for i, re in enumerate(test_res)})
         log.update(**{'test_' + k: v for k, v in test_met.items()})
         #print(len(latent_rep_check))
-        csv_file_path = "/home/debodeep.banerjee/R2Gen/csv_outputs/only_find/pred_reaps_gt.csv"
+        #csv_file_path = "/home/debodeep.banerjee/R2Gen/csv_outputs/only_find/pred_reps_round1_more_data.csv"
 
         # Open the CSV file in write mode
         
-        with open(csv_file_path, mode='w', newline='') as csv_file:
-            csv_writer = csv.writer(csv_file)
+        #with open(csv_file_path, mode='w', newline='') as csv_file:
+            #csv_writer = csv.writer(csv_file)
 
 
         #    # Write each string in the list as a row in the CSV file
-            for string in test_res:
-                 csv_writer.writerow([string])
+            #for string in test_res:
+                # csv_writer.writerow([string])
         print(log)
         
         # Create the dataset with predictions and latent
@@ -293,7 +289,7 @@ class Tester(BaseTester):
         scaler_weight = MinMaxScaler()
         
         
-        train_x = scaler_trainX.fit_transform(train_list.reshape(len(train_list),40))
+        train_x = scaler_trainX.fit_transform(train_list.reshape(len(train_list),512))
         weight_train = scaler_weight.fit_transform(np.array(weight_train).reshape(-1, 1))
         #print('weight_train: ', weight_train)
         train_y = scaler_trainY.fit_transform(train_y)
@@ -310,10 +306,10 @@ class Tester(BaseTester):
         #torch.save({'min': min_tensor, 'max': max_tensor}, 'train_min_max_scalar_only_find_updated_new.pt') #train_min_max_scalar_seq_40: see att_model.py. We take the seq_40 
         
         
-        val_x = scaler_trainX.transform(val_list.reshape(len(val_list),40))
+        val_x = scaler_trainX.transform(val_list.reshape(len(val_list),512))
         val_y = scaler_trainY.transform(val_y.reshape(len(val_y),1))
 
-        test_x = scaler_trainX.transform(test_list.reshape(len(test_list),40))
+        test_x = scaler_trainX.transform(test_list.reshape(len(test_list),512))
         test_y = scaler_trainY.transform(test_y.reshape(len(test_y),1))
         '''
         '''
@@ -326,7 +322,10 @@ class Tester(BaseTester):
         torch.save(test_x, location+'test_x_new_only_find_updated.pt')
         torch.save(test_y, location+'test_y_new_only_find_updated.pt')
         torch.save(weight_train, location+'weight_new_only_find_updated.pt')
-        
+        '''
+        #len(train_y_pt)
+        # Assume you have independent variables X and a dependent variable y
+        '''
         train_x_pt = torch.tensor(train_x,dtype=torch.float) #pt: pytorch
         train_x_pt = train_x_pt/torch.norm(train_x_pt, dim = 1, keepdim= True)
         train_y_pt = torch.tensor(train_y, dtype=torch.float).reshape(-1,1) #pt:pytorch
@@ -381,8 +380,8 @@ class Tester(BaseTester):
             early_stopping(val_loss)
 
             if early_stopping.early_stop:
-            print("Early stopping")
-            break
+                print("Early stopping")
+                break
         # Test the model
         with torch.no_grad():
             predicted = model_surr(test_x_pt)
@@ -397,7 +396,7 @@ class Tester(BaseTester):
         rmse=mse**0.5
         print('the rmse loss is ', rmse)
         print('Saving surrogate model...')
-        #torch.save(model_surr, 'surrogate/'+'surr_lin_reg_split_only_find_updated_new.pt')
+        torch.save(model_surr, 'surrogate/'+'surr_lin_reg_split_only_find_updated.pt')
         print('variance of test list: ', torch.std(test_y_pt))
         print('variance of pred list: ', np.std(np.array(predicted)))
         print('relative RSE: ', rel_rse)
@@ -410,7 +409,7 @@ class Tester(BaseTester):
         plt.plot(validation_loss, label= 'validation loss', color='blue', linewidth=2.0)
         plt.legend()
         plt.title('Surrogate train on splitted training data')
-        #plt.savefig('plots/surr_lin_reg_split_only_find_updated.png')
+        plt.savefig('plots/surr_lin_reg_split_only_find_updated.png')
         plt.close(fig_surr)
 
         ############ Ridge regression ############
@@ -482,7 +481,7 @@ class Tester(BaseTester):
         plt.xticks(fontsize=30)
         plt.yticks(fontsize=30)
         plt.legend()
-        #plt.savefig('plots/surr_ridge_reg_split_only_find_updated.png')
+        plt.savefig('plots/surr_ridge_reg_split_only_find_updated.png')
         plt.close(fig_ridge)
-        '''
+        
         return log
