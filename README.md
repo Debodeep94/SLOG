@@ -11,6 +11,8 @@ The general idea is to produce a clinical reports from chest x-ray images with h
 $\bullet$ Once the the surrogate is trained, we finetune the LLM along with the help of the surrogate model. At the time of finetunig, our hybrid loss function is-
 
 $$
-L_{hdm} = CE_{LLM}+\lambda*I, \text{where I is the information score}
+L_{hdm} = CE_{LLM}+\lambda*I, \text{where I is the mean information score obtained from the surrogate}
 $$
+
+The codes for finetuning is provided in the finetuner_train.py file. 
 
