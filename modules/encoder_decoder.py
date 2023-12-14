@@ -221,9 +221,13 @@ class PositionwiseFeedForward(nn.Module):
 
 
 class Embeddings(nn.Module):
-    def __init__(self, d_model, vocab):
+    def __init__(self, d_model, vocab, pretrained_weights=None):
         super(Embeddings, self).__init__()
-        self.lut = nn.Embedding(vocab, d_model)
+        if pretrained_weights is not None:
+            pretrained_weights=torch.load('target_embedding_weights.pth')
+            self.lut = nn.Embedding.from_pretrained(pretrained_weights, freeze=False)
+        else:
+            self.lut = nn.Embedding(vocab, d_model)
         self.d_model = d_model
 
     def forward(self, x):

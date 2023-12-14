@@ -12,7 +12,7 @@ from models.r2gen import R2GenModel
 #from modules.finetuner import FineTuner
 from modules.surrogate_tester import SurrogateTester
 from modules.optimizers import build_optimizer, build_lr_scheduler
-
+from modules.diff_chex import SurrogateFamily
 
 def parse_agrs():
     parser = argparse.ArgumentParser()
@@ -90,7 +90,7 @@ def parse_agrs():
     parser.add_argument('--resume', type=str, help='whether to resume the training from existing checkpoints.')
     parser.add_argument('--load', type=str, help='whether to load a pre-trained model.')
     parser.add_argument('--surr_weight', type=float, default=1.0, help='Weight applied to surrogate information scores.')
-    parser.add_argument('--min_max_scaler', type=str, help='min max scalar path')
+    parser.add_argument('--min_max_scaler', type=str, help='Weight applied to surrogate information scores.')
 
     args = parser.parse_args()
     return args

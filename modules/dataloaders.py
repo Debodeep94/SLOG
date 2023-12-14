@@ -59,5 +59,5 @@ class R2DataLoader(DataLoader):
         for i, report_masks in enumerate(reports_masks):
             targets_masks[i, :len(report_masks)] = report_masks
 
-        return images_id, images, torch.LongTensor(targets), torch.FloatTensor(targets_masks)
+        return images_id, images, torch.LongTensor(targets), torch.FloatTensor(targets_masks), torch.tensor(seq_lengths)
 

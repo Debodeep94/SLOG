@@ -116,7 +116,7 @@ class BaseTrainer(object):
             count_epoch+=1
         fig= plt.plot(range(count_epoch+1), loss)
         fig= plt.title('Train Loss')
-        plt.savefig('/home/debodeep.banerjee/R2Gen/plots/only_find/train.png')
+        plt.savefig('/home/debodeep.banerjee/R2GenCMN/plots/train_imp_n_find.png')
         return log
         self._print_best()
         self._print_best_to_file()
@@ -228,7 +228,7 @@ class Trainer(BaseTrainer):
         #check_tensor_device(self.model)
         count=0
         self.model.train()
-        for batch_idx, (images_id, images, reports_ids, reports_masks) in tqdm(enumerate(self.train_dataloader)):
+        for batch_idx, (images_id, images, reports_ids, reports_masks, seq_length) in tqdm(enumerate(self.train_dataloader)):
             images, reports_ids, reports_masks = images.to(self.device), reports_ids.to(self.device), reports_masks.to(self.device)
             output = self.model(images, reports_ids, mode='train')
             loss = self.criterion(output, reports_ids, reports_masks)
@@ -245,22 +245,27 @@ class Trainer(BaseTrainer):
         count_val=0
         with torch.no_grad():
             val_gts, val_res = [], []
-            for batch_idx, (images_id, images, reports_ids, reports_masks) in enumerate(self.val_dataloader):
+            for batch_idx, (images_id, images, reports_ids, reports_masks, seq_length) in enumerate(self.val_dataloader):
                 images, reports_ids, reports_masks = images.to(self.device), reports_ids.to(self.device), reports_masks.to(self.device)
-                output,_ = self.model(images, mode='sample')
-                reports = self.model.tokenizer.decode_batch(output.cpu().numpy())
+                latent,seq, gs_logps = self.model(images, mode='gumbel')
+                # Separate 'findings' and 'impression' based on [SEP] token
+                reports = self.model.tokenizer.decode_batch(seq.cpu().numpy())
+                #print(reports)
+                sep_index = '[<sep>]'
+                #parts = reports[0].split(sep_index, 1)  # Split into two parts, assuming the first [SEP] separates 'findings' and 'impression'
+                #findings = parts[0].strip() if len(parts) > 0 else ''
+                #impression = parts[1].strip() if len(parts) > 1 else ''
+                #print('reports impression: ', impression)
+                #reports = self.model.tokenizer.decode_batch(seq.cpu().numpy())
                 ground_truths = self.model.tokenizer.decode_batch(reports_ids[:, 1:].cpu().numpy())
                 val_res.extend(reports)
                 val_gts.extend(ground_truths)
-                count_val+=1
-                if count_val == 100:
-                    break
             val_met, val_met_ind = self.metric_ftns({i: [gt] for i, gt in enumerate(val_gts)},
                                        {i: [re] for i, re in enumerate(val_res)})
             #print('ground truths: ', val_gts)
             #print('------------')
             #print('------------')
-            #print('prediction: ', val_res)
+            print('prediction: ', val_res)
             log.update(**{'val_' + k: v for k, v in val_met.items()})
 
         '''self.model.eval()

@@ -6,6 +6,7 @@ import pandas as pd
 import ast
 import cv2
 import torch
+import torch.nn as nn
 import numpy as np
 from modules.utils import generate_heatmap
 from surrogate import SurrogateModel
@@ -44,7 +45,8 @@ class BaseTester(object):
         self._load_checkpoint(args.load)
         self.surr_weight = args.surr_weight
         self.info_score_data= args.info_score_data
-
+        self.surrogate_model = args.surrogate_model
+        self.min_max_scaler = args.min_max_scaler
     @abstractmethod
     def test(self):
         raise NotImplementedError
@@ -90,23 +92,44 @@ class SurrogateTester(BaseTester):
         with torch.no_grad():
             img_ids, latent_rep_check, test_gts, test_res, weights,pred_info_scores = [], [], [], [], [],[]
             count=0
-            for batch_idx, (images_id, images, reports_ids, reports_masks) in tqdm(enumerate(self.surrogate_dataloader)):
-                images, reports_ids, reports_masks = images.to(self.device), reports_ids.to(
-                    self.device), reports_masks.to(self.device)
+            for batch_idx, (images_id, images, reports_ids, reports_masks,seq_length) in tqdm(enumerate(self.surrogate_dataloader)):
+                images, reports_ids, reports_masks, seq_length = images.to(self.device), reports_ids.to(
+                    self.device), reports_masks.to(self.device), seq_length.to(self.device)
                 print('entering inference...')
                 #print('image id: ', images_id)
-                output, latent, score = self.model(images, mode='surrogate')
+                sample_lps, seq, gs_logps = self.model(images, mode='gumbel')
                 #print('latent: ', latent)
                 #print('latent size: ', latent.size())
-                pred_info_scores.extend(score)
-                latent= torch.split(latent, split_size_or_sections=1, dim=0)
-                reports = self.model.tokenizer.decode_batch(output.cpu().numpy())
+                latent= torch.split(sample_lps, split_size_or_sections=1, dim=0)
+                reports = self.model.tokenizer.decode_batch(seq.cpu().numpy())
                 print('report printing')
-                #print('reports: ', reports)
+                print('seq_length: ', seq_length)
+                # min max scalaer
+                loaded_data = torch.load(self.min_max_scaler)
+                # Retrieve the min and max tensors
+                min_tensor = loaded_data['min']
+                max_tensor = loaded_data['max']
+                min_tensor = min_tensor.to(self.device)
+                max_tensor = max_tensor.to(self.device)
+
+                gs_logps_test = torch.mean(gs_logps, dim=1)
+                test_x_test = gs_logps_test.sub(min_tensor).div(max_tensor - min_tensor) 
+                test_x_test = test_x_test.to(torch.float32)   
+                test_x_test = test_x_test/torch.norm(test_x_test,dim=1, keepdim=True)
+                print(self.surrogate_model)
+                
+                surrogate = torch.load(self.surrogate_model)   
+                surrogate = surrogate.to(self.device)
+                predicted_test = surrogate(test_x_test)
+                reports = self.model.tokenizer.decode_batch(seq.cpu().numpy())
                 ground_truths = self.model.tokenizer.decode_batch(reports_ids[:, 1:].cpu().numpy())
                 test_res.extend(reports)
                 test_gts.extend(ground_truths)
                 latent_rep_check.extend(latent)
+                pred_info_scores.extend(predicted_test)
+                count = count + 1 
+                #if count == 5:
+                    #break
                 
         test_met, test_met_id = self.metric_ftns({i: [gt] for i, gt in enumerate(test_gts)},
                                     {i: [re] for i, re in enumerate(test_res)})
@@ -121,8 +144,8 @@ class SurrogateTester(BaseTester):
                       'median info score':torch.median(concatenated_tensor) })
         # save the file to csv for chexpert
         # Specify the CSV file path
-        '''
-        csv_file_path = "/home/debodeep.banerjee/R2Gen/csv_outputs/only_find/chex/no_oracle/output_"+str(self.surr_weight)+".csv"
+        
+        csv_file_path = "/home/debodeep.banerjee/R2Gen/csv_outputs/imp_n_find/results_"+str(self.surr_weight)+".csv"
 
         # Open the CSV file in write mode
         with open(csv_file_path, mode='w', newline='') as csv_file:
@@ -131,7 +154,18 @@ class SurrogateTester(BaseTester):
             # Write each string in the list as a row in the CSV file
             for string in test_res:
                 csv_writer.writerow([string])
-        '''
+        
+        csv_file_path = "/home/debodeep.banerjee/R2Gen/csv_outputs/imp_n_find/output_R2Gen_imp_n_find_gt.csv"
+
+        # Open the CSV file in write mode
+        with open(csv_file_path, mode='w', newline='') as csv_file:
+            csv_writer = csv.writer(csv_file)
+
+            # Write each string in the list as a row in the CSV file
+            for string in test_gts:
+                csv_writer.writerow([string])
+        
         print(log)
+        
         return log
 

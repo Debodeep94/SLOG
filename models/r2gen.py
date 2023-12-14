@@ -20,6 +20,8 @@ class R2GenModel(nn.Module):
             self.forward = self.forward_mimic_cxr
         if args.surrogate_model is not None:
             self.surrogate_model = args.surrogate_model
+        if args.min_max_scaler is not None:
+            self.min_max_scaler = args.min_max_scaler
 
     def __str__(self):
         model_parameters = filter(lambda p: p.requires_grad, self.parameters())
@@ -50,12 +52,15 @@ class R2GenModel(nn.Module):
             output = self.encoder_decoder(fc_feats, att_feats, targets, mode='forward')
             return output
         elif mode == 'sample':
-            latent, output = self.encoder_decoder(fc_feats, att_feats, mode='sample')
-            return output, latent
+            latent, seq, seq_logps = self.encoder_decoder(fc_feats, att_feats, mode='sample')
+            return  latent, seq, seq_logps
+        elif mode == 'gumbel':
+            latent, seq, gs_logps = self.encoder_decoder(fc_feats, att_feats, mode='diverse_sample')
+            return  latent, seq, gs_logps
 
         elif mode == 'surrogate':
-            logits, output = self.encoder_decoder(fc_feats, att_feats, mode='sample')
-            loaded_data = torch.load('/home/debodeep.banerjee/R2Gen/train_min_max_scalar_only_find.pt')
+            latent, seq, gs_logps = self.encoder_decoder(fc_feats, att_feats, mode='diverse_sample')
+            loaded_data = torch.load(self.min_max_scaler)
             #print('test_x_ft after minmax: ', logits)
             # Retrieve the min and max tensors
             min_tensor = loaded_data['min']
@@ -64,20 +69,27 @@ class R2GenModel(nn.Module):
             min_tensor = min_tensor.to(torch.float32)
             min_tensor = min_tensor.to(torch.float32)
 
-            min_tensor = min_tensor.to(logits.device)
-            max_tensor = max_tensor.to(logits.device)
+            min_tensor = min_tensor.to(latent.device)
+            max_tensor = max_tensor.to(latent.device)
             #print('min_tensor: ', min_tensor)
             #print('max_tensor: ', max_tensor)
-
-            test_x_ft = logits.sub(min_tensor).div(max_tensor - min_tensor)
+            # take the mean of the vectors
+            saved_embedding_weights = torch.load('target_embedding_weights.pth')
+            new_embedding_layer=nn.Embedding.from_pretrained(saved_embedding_weights)
+            #new_embedding_layer.weight.data.copy_(saved_embedding_weights)
+            new_embedding_layer=new_embedding_layer.to(seq.device)
+            embedded_sentence = new_embedding_layer(seq)
+            embedded_sentence = torch.mean(embedded_sentence, dim=1)
+            test_x_ft = embedded_sentence.sub(min_tensor).div(max_tensor - min_tensor)
             test_x_ft = test_x_ft.to(torch.float32)
+            test_x_ft = test_x_ft/torch.norm(test_x_ft,dim=1, keepdim=True)
             #print('test_x_ft after minmax: ', test_x_ft)
             #test_x_tr = latent# torch_minmax(latent, self.device)
             #print(self.surrogate_model)
             surrogate = torch.load(self.surrogate_model)   
-            surrogate = surrogate.to(logits.device)
+            surrogate = surrogate.to(seq.device)
             predicted_ft = surrogate(test_x_ft)
-            return output, logits, predicted_ft
+            return latent, seq, predicted_ft
         else:
             raise ValueError
         

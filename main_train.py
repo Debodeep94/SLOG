@@ -65,7 +65,7 @@ def parse_agrs():
     parser.add_argument('--save_period', type=int, default=1, help='the saving period.')
     parser.add_argument('--monitor_mode', type=str, default='max', choices=['min', 'max'], help='whether to max or min the metric.')
     parser.add_argument('--monitor_metric', type=str, default='BLEU_4', help='the metric to be monitored.')
-    parser.add_argument('--early_stop', type=int, default=20, help='the patience of training.')
+    parser.add_argument('--early_stop', type=int, default=35, help='the patience of training.')
 
     # Optimization
     parser.add_argument('--optim', type=str, default='Adam', help='the type of the optimizer.')
@@ -83,6 +83,7 @@ def parse_agrs():
     parser.add_argument('--seed', type=int, default=9233, help='.')
     parser.add_argument('--resume', type=str, help='whether to resume the training from existing checkpoints.')
     parser.add_argument('--surrogate_model', type=str, default='surrogate/biggest_split_data/surr_model_ridge_biggest_split_bleu4_final.pt', help='Regression model')
+    parser.add_argument('--min_max_scaler', type=str, help='min max scalar path')
     args = parser.parse_args()
     return args
 

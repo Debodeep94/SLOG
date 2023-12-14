@@ -47,17 +47,10 @@ from modules.utils import EarlyStopping, torch_minmax
 from torch.utils.data import DataLoader, ConcatDataset
 import torch.nn.functional as F
 import wandb
-from label import write, label
-from surrogate_chexpert import chex_surr
 import csv
 import importlib
 import sys
-# for parser
 import logging
-from pathlib import Path
-from negbio.pipeline import parse, ptb2ud, negdetect
-from negbio.neg import semgraph, propagator, neg_detector
-from negbio import ngrex
 from tqdm import tqdm
 
 from constants import *
@@ -110,6 +103,7 @@ class BaseTrainer(object):
         #self.writer = SummaryWriter(log_dir='logs')
 
         self.surrogate_model = args.surrogate_model
+        self.min_max_scaler = args.min_max_scaler
     print('DID YOU PUT A CORRECT LAMBDA VALUE TO THE WANDB CONFIG?????')
     wandb.init(
     # set the wandb project where this run will be logged
@@ -125,7 +119,7 @@ class BaseTrainer(object):
     )
     @abstractmethod
     
-    def _train_epoch(self, epoch, parser):
+    def _train_epoch(self, epoch):
         raise NotImplementedError
 
     def train(self):
@@ -136,11 +130,8 @@ class BaseTrainer(object):
         #directory_to_add = "/home/debodeep.banerjee/chexpert-labeler/NegBio"
         #os.environ['PYTHONPATH'] = f"{directory_to_add}:{os.environ.get('PYTHONPATH', '')}"
         
-        for epoch in range(self.start_epoch, self.epochs + 1):
-            #if epoch!=1:
-                #self.surrogate_model = 'results/workshop/'+'surrogate_weights_ratio50.pt'
-            parser = parse.NegBioParser(model_dir=PARSING_MODEL_DIR)    
-            result, train_loss, val_info_score = self._train_epoch(epoch, parser)
+        for epoch in range(self.start_epoch, self.epochs + 1): 
+            result, train_loss, val_info_score = self._train_epoch(epoch)
             #flat_list = [item for sublist in val_info_score.tolist() for item in sublist] # convert the list of lists into a single list
             val_info_scores.append(val_info_score)
             print(result)
@@ -187,13 +178,13 @@ class BaseTrainer(object):
         fig_box = plt.figure()
         plt.boxplot(val_info_scores)
         plt.title('Box plot of information scores of validation data over epochs')
-        plt.savefig('/home/debodeep.banerjee/R2Gen/plots/only_find/'+str(self.ce_weight).replace('.', '_')+'_SR'+str(self.surr_weight).replace('.', '_')+'.png')
+        plt.savefig('/home/debodeep.banerjee/R2Gen/plots/only_find/interactive/'+str(self.ce_weight).replace('.', '_')+'_SR'+str(self.surr_weight).replace('.', '_')+'.png')
         plt.close(fig_box)
         # plot train list
         fig=plt.figure()
         plt.plot(loss)
         plt.title('Train+Finetune')
-        plt.savefig('/home/debodeep.banerjee/R2Gen/plots/only_find/'+str(self.ce_weight).replace('.', '_')+'_SR'+str(self.surr_weight).replace('.', '_')+'.png')
+        plt.savefig('/home/debodeep.banerjee/R2Gen/plots/only_find/interactive/'+str(self.ce_weight).replace('.', '_')+'_SR'+str(self.surr_weight).replace('.', '_')+'.png')
         plt.close(fig)
 
         return log
@@ -301,15 +292,14 @@ class BaseTrainer(object):
 
 class FineTuner(BaseTrainer):
     def __init__(self, model, criterion, metric_ftns, optimizer, args, lr_scheduler, train_dataloader, val_dataloader,
-                 test_dataloader, surr_dataloader):
+                 test_dataloader):
         super(FineTuner, self).__init__(model, criterion, metric_ftns, optimizer, args)
         self.lr_scheduler = lr_scheduler
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
         self.test_dataloader = test_dataloader
-        self.surr_dataloader = surr_dataloader
         
-    def _train_epoch(self, epoch, parser):
+    def _train_epoch(self, epoch):
         log_dir = "logs/"   # Replace with the directory where you want to save the logs
         
         print('entering train_epoch')
@@ -367,7 +357,7 @@ class FineTuner(BaseTrainer):
             output_surr, latent = self.model(images,reports_ids, mode='sample')
             #print(latent.dtype)
             output_surr_ft, lat_vec_ft = self.model(images_ft,reports_ids_ft, mode='sample')
-            loaded_data = torch.load('/home/debodeep.banerjee/R2Gen/surr_chex_min_max_only_find.pt')
+            loaded_data = torch.load(self.min_max_scaler)
 
             # Retrieve the min and max tensors
             min_tensor = loaded_data['min']
@@ -376,12 +366,15 @@ class FineTuner(BaseTrainer):
             max_tensor = max_tensor.to(self.device)
             test_x_ft = lat_vec_ft.sub(min_tensor).div(max_tensor - min_tensor)
             test_x_ft = test_x_ft.to(torch.float32)
-
+            test_x_ft = test_x_ft/torch.norm(lat_vec_ft,dim=1, keepdim=True)
+        
             test_x_tr = latent.sub(min_tensor).div(max_tensor - min_tensor) 
-            test_x_tr = test_x_tr.to(torch.float32)   
+            test_x_tr = test_x_tr.to(torch.float32)
+            test_x_tr = test_x_tr/torch.norm(latent,dim=1, keepdim=True)
             #test_x_tr = latent# torch_minmax(latent, self.device)
-            print(self.surrogate_model)
-            surrogate = torch.load('/home/debodeep.banerjee/R2Gen/surrogate/surr_chex_lin_reg_split_only_find.pt')#self.surrogate_model)   
+            print('surrogate model: ', self.surrogate_model)
+            print('min max scalar : ',self.min_max_scaler)
+            surrogate = torch.load(self.surrogate_model)#self.surrogate_model)   
             surrogate = surrogate.to(self.device)
             for params in surrogate.parameters():
                 params.requires_grad = False
@@ -416,9 +409,8 @@ class FineTuner(BaseTrainer):
             torch.nn.utils.clip_grad_value_(self.model.parameters(), 0.1)
             self.optimizer.step()
             print('all done')
-            count+=1
-            if count==10:
-                break  
+            count = count+1
+            
             
 
         log = {'total cross entropy loss: ': loss_llm/ count}
@@ -430,65 +422,10 @@ class FineTuner(BaseTrainer):
                         })
         print(len(self.train_dataloader))
         print('log: ', log)
-        
-        print("Entering Surrogate updation")
-        self.model.eval()
-        with torch.no_grad():
-            img_ids, latent_rep_check, test_gts, test_res, weights = [], [], [], [], []
-            count_test=0
-            for batch_idx, (images_id, images, reports_ids, reports_masks) in tqdm(enumerate(self.surr_dataloader)):
-                images, reports_ids, reports_masks = images.to(self.device), reports_ids.to(
-                    self.device), reports_masks.to(self.device)
 
-                output, seq_logprobs = self.model(images, mode='sample')
-                #print('output: ', output)
-                #print('seq log probs size:',  seq_logprobs.size())
-                latent= torch.split(seq_logprobs, split_size_or_sections=1, dim=0)
-                reports = self.model.tokenizer.decode_batch(output.cpu().numpy())
-                list_of_rep = [[item] for item in reports]
-                
-                #ground_truths = self.model.tokenizer.decode_batch(reports_ids[:, 1:].cpu().numpy())
-                #list_of_gt = [[item] for item in ground_truths]
-                
-                #bleu_score, bleu_score_ind = self.metric_ftns({i: [gt] for i, gt in enumerate(ground_truths)},
-                                        #{i: [re] for i, re in enumerate(reports)})
-                
-                
-                #print('mean_weights ',mean_weights)
-                test_res.extend(reports)
-                
-                latent_rep_check.extend(latent)
-                img_ids.extend(list(images_id))
-                count_test+=1
-                if count_test==2:
-                    break
-        #print(latent_rep_check)
-        tensor_dict = dict(zip(img_ids, latent_rep_check))
-        torch.save(tensor_dict, 'chex_dict.pt')
-        print('reports on chex finetune: ', test_res)
-        print('length: ', len(test_res))
-        csv_file_path = "/home/debodeep.banerjee/R2Gen/csv_outputs/only_find/pred_reps_interact.csv"
+        # Entering validation
 
-        # Open the CSV file in write mode
-        with open(csv_file_path, mode='w', newline='') as csv_file:
-            csv_writer = csv.writer(csv_file)
-
-            # Write each string in the list as a row in the CSV file
-            for string in test_res:
-                csv_writer.writerow([string])
-        print("csv created")
-        # Entering chexpert
-        print("Entering labeling")
-        chex_label = label(self.args, parser)
-        milestone1=time.time()
-        print("time taken since epoch: ", milestone1-start)
-        print("Entering regression")
-        reg_model = chex_surr(tensor_dict)
-
-        # Create a new iterator that starts from the specified index and returns the specified number of elements
-        self.model.eval()
-        print('entering validation ...')
-        #self.model.eval()
+        print('entering validation')
         with torch.no_grad():
             count_val=0
             val_gts, val_res, val_inf_pred = [], [],[]

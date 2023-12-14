@@ -202,7 +202,7 @@ class CaptionModel(nn.Module):
                             if is_end[vix]:
                                 final_beam = {
                                     'seq': beam_seq_table[divm][b, vix].clone(),
-                                    #'logps': beam_seq_logprobs_table[divm][b, vix].clone(), 
+                                    'logps': beam_seq_logprobs_table[divm][b, vix].clone(), 
                                     #'unaug_p': beam_seq_logprobs_table[divm][b, vix].sum().item(),
                                     'p': beam_logprobs_sum_table[divm][b, vix].item(),
                                     'lat': beam_latent_table[divm][b, vix].clone()
@@ -388,8 +388,7 @@ class CaptionModel(nn.Module):
 
     def sample_next_word(self, logprobs, sample_method, temperature):
         if sample_method == 'greedy':
-            with torch.no_grad(): #the no grad is added by me
-                sampleLogprobs, it = torch.max(logprobs.data, 1)
+            sampleLogprobs, it = torch.max(logprobs.data, 1)
             it = it.view(-1).long()
         elif sample_method == 'gumbel':  # gumbel softmax
             def sample_gumbel(shape, eps=1e-20):
@@ -401,6 +400,9 @@ class CaptionModel(nn.Module):
                 return F.log_softmax(y / temperature, dim=-1)
 
             _logprobs = gumbel_softmax_sample(logprobs, temperature)
+            #print('logps: ', logprobs)
+            #print('gumbel logps: ', _logprobs)
+            #print('gumbel logps size: ', _logprobs.size())
             _, it = torch.max(_logprobs.data, 1)
             sampleLogprobs = logprobs.gather(1, it.unsqueeze(1))  # gather the logprobs at sampled positions
         else:
@@ -425,4 +427,4 @@ class CaptionModel(nn.Module):
                     logprobs = tmp
             it = torch.distributions.Categorical(logits=logprobs.detach()).sample()
             sampleLogprobs = logprobs.gather(1, it.unsqueeze(1))  # gather the logprobs at sampled positions
-        return it, sampleLogprobs
+        return it, sampleLogprobs, _logprobs

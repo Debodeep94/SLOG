@@ -88,7 +88,7 @@ def parse_agrs():
     parser.add_argument('--resume', type=str, help='whether to resume the training from existing checkpoints.')
     parser.add_argument('--load', type=str, help='whether to load a pre-trained model.')
     parser.add_argument('--surrogate_model', type=str, help='Regression model')
-
+    parser.add_argument('--min_max_scaler', type=str, help='min max scalar path')
     args = parser.parse_args()
     return args
 
@@ -109,7 +109,7 @@ def main():
     # create data loader
     test_dataloader = R2DataLoader(args, tokenizer, split='finetune', shuffle=False) #ideally it should be 'test'
     train_dataloader = R2DataLoader(args, tokenizer, split='train', shuffle=False) 
-    #surrogate_dataloader = R2DataLoader(args, tokenizer, split='test', shuffle=False) 
+    #surrogate_dataloader = R2DataLoader(args, tokenizer, split='chexpert', shuffle=False) 
 
     # build model architecture
     model = R2GenModel(args, tokenizer)

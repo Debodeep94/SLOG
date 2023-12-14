@@ -3,6 +3,7 @@ from abc import abstractmethod
 #from apex import amp
 import time
 import torch
+import torch.nn as nn
 import pandas as pd
 from numpy import inf
 import logging
@@ -15,43 +16,38 @@ import torch
 import numpy as np
 from modules.utils import generate_heatmap
 from surrogate import SurrogateModel, SurrogateLoss, CustomRidgeLoss, RidgeRegression
-from surrogate import SurrogateLoss
 from pycocoevalcap.bleu.bleu import Bleu
 from tqdm import tqdm
 from sklearn.preprocessing import MinMaxScaler
 import itertools
-from pycocoevalcap.bleu.bleu import Bleu
-#from torchviz import make_dot
-#from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 from torch.profiler import profile, record_function, ProfilerActivity
 from modules.utils import cycle
 from torch.autograd import Variable
 import numpy as np
-from modules.utils import generate_heatmap, surrogate_regression, surrogate_split
-from surrogate import SurrogateModel, SurrogateLoss, CustomRidgeLoss, RidgeRegression
 from pycocoevalcap.bleu.bleu import Bleu
 from tqdm import tqdm
 from sklearn.preprocessing import MinMaxScaler
 import itertools
 import random
-from modules.loss import jsd_loss
-from torchviz import make_dot
-#from torchsummary import summary
 import matplotlib.pyplot as plt
 from sklearn.svm import SVR
 from sklearn.pipeline import make_pipeline
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-from modules.utils import EarlyStopping, torch_minmax
+from modules.utils import EarlyStopping#, torch_minmax
 from torch.utils.data import DataLoader, ConcatDataset
 import torch.nn.functional as F
 import wandb
+from modules.rnn_surrogate import *
 
 print('GPU availability: ', torch.cuda.is_available())
 class BaseTrainer(object):
     def __init__(self, model, criterion, metric_ftns, optimizer, args):
         self.args = args
+        logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
+                            datefmt='%m/%d/%Y %H:%M:%S', level=logging.INFO)
+        self.logger = logging.getLogger(__name__)
 
         # setup GPU device if available, move model into configured device
         self.device, device_ids = self._prepare_device(args.n_gpu)
@@ -82,13 +78,15 @@ class BaseTrainer(object):
         self.checkpoint_dir = args.save_dir
         self.ce_weight= args.llm_weight
         self.surr_weight = args.surr_weight
-        
+        self.min_max_scaler = args.min_max_scaler        
 
         if not os.path.exists(self.checkpoint_dir):
             os.makedirs(self.checkpoint_dir)
 
         if args.resume is not None:
             self._resume_checkpoint(args.resume)
+        if args.load is not None:
+            self._load_checkpoint(args.load)
 
         self.best_recorder = {'val': {self.mnt_metric: self.mnt_best}}#,
                               #'test': {self.mnt_metric_test: self.mnt_best}}
@@ -96,17 +94,18 @@ class BaseTrainer(object):
 
         self.surrogate_model = args.surrogate_model
     print('DID YOU PUT A CORRECT LAMBDA VALUE TO THE WANDB CONFIG?????')
-    wandb.init(
-    # set the wandb project where this run will be logged
-    project="Finetune_Lamda_1",
     
-    # track hyperparameters and run metadata
-    config={
-    "architecture": "transformer",
-    "dataset": "mimic train 10845",
-    "epochs": 100,
-        }
-    )
+    wandb.init(
+        # set the wandb project where this run will be logged
+        project="Finetune_Lamda_1",
+        
+        # track hyperparameters and run metadata
+        config={
+        "architecture": "transformer",
+        "dataset": "mimic train 10845",
+        "epochs": 100,
+            }
+        )
     @abstractmethod
     
     def _train_epoch(self, epoch):
@@ -173,7 +172,7 @@ class BaseTrainer(object):
         fig=plt.figure()
         plt.plot(loss)
         plt.title('Train+Finetune')
-        plt.savefig('/home/debodeep.banerjee/R2Gen/only_find/only_find/'+str(self.ce_weight).replace('.', '_')+'_SR'+str(self.surr_weight).replace('.', '_')+'.png')
+        plt.savefig('/home/debodeep.banerjee/R2Gen/only_find/'+str(self.ce_weight).replace('.', '_')+'_SR'+str(self.surr_weight).replace('.', '_')+'.png')
         plt.close(fig)
 
         return log
@@ -225,11 +224,11 @@ class BaseTrainer(object):
             'optimizer': self.optimizer.state_dict(),
             'monitor_best': self.mnt_best
         }
-        filename = os.path.join(self.checkpoint_dir, 'finetuned_checkpoint_CE_surr_'+str(self.ce_weight).replace('.', '_')+'_SR'+str(self.surr_weight).replace('.', '_')+'.pth') # startid=0; num_ele=20
+        filename = os.path.join(self.checkpoint_dir, 'finetuned_checkpoint_CE_surr_swap_'+str(self.ce_weight).replace('.', '_')+'_SR'+str(self.surr_weight).replace('.', '_')+'.pth') # startid=0; num_ele=20
         torch.save(state, filename)
         print("Saving checkpoint: {} ...".format(filename))
         if save_best:
-            best_path = os.path.join(self.checkpoint_dir, 'finetuned_best_CE_surr_'+str(self.ce_weight).replace('.', '_')+'_sr'+str(self.surr_weight).replace('.', '_')+'.pth')
+            best_path = os.path.join(self.checkpoint_dir, 'finetuned_best_CE_surr_swap_'+str(self.ce_weight).replace('.', '_')+'_sr'+str(self.surr_weight).replace('.', '_')+'.pth')
             torch.save(state, best_path)
             print("Saving current best: model_best2.pth ...")
 
@@ -247,13 +246,10 @@ class BaseTrainer(object):
         load_path = str(load_path)
         self.logger.info("Loading checkpoint: {} ...".format(load_path))
         checkpoint = torch.load(load_path)
-        print(checkpoint)
-        print(checkpoint['epoch'])
         #surrogate_checkpoint= torch.load('/nfs/data_chaos/dbanerjee/my_data/R2Gen/surrogate/surr_model_sample_size_2500.pt')
         self.model.load_state_dict(checkpoint['state_dict'])
-
-
-        print("Checkpoint loaded. Resume training from epoch {}".format(self.start_epoch))
+        print("Checkpoint loaded. Initiating finetuning from epoch {}".format(self.start_epoch))
+        self.optimizer.load_state_dict(checkpoint['optimizer'])
 
     def _record_best(self, log):
         improved_val = (self.mnt_mode == 'min' and log[self.mnt_metric] <= self.best_recorder['val'][
@@ -292,16 +288,6 @@ class FineTuner(BaseTrainer):
         log_dir = "logs/"   # Replace with the directory where you want to save the logs
         
         print('entering train_epoch')
-        
-        # Create a new iterator that starts from the specified index and returns the specified number of elements
-        
-        #latent_rep_check, images_ids, test_res, test_gts, weights=[], [], [], [], []
-        '''train_dataloader_cycle = itertools.cycle(self.train_dataloader)
-        test_dataloader_cycle = itertools.cycle(self.test_dataloader)
-
-        train_dataloader_size = len(self.train_dataloader)
-        test_dataloader_size = len(self.test_dataloader)
-        max_dataloader_size = max(train_dataloader_size, test_dataloader_size)'''
         loss_llm = 0
         hybrid=0
         tot_surr_loss=0
@@ -317,9 +303,8 @@ class FineTuner(BaseTrainer):
         print('surrogate weight', self.surr_weight)
         print('LLM weight', self.ce_weight)
         print('------------------------------------------------------------------------------------------------')
-        for batch_idx_llm, ((images_id, images, reports_ids, reports_masks), 
-                           (images_id_surr_ft, images_surr_ft, reports_ids_surr_ft, reports_masks_surr_ft)) in tqdm(enumerate(zip(self.train_dataloader, cycle(self.test_dataloader)))): #because ft is less than train here
-        #for batch_idx, (images_id, images, reports_ids, reports_masks) in tqdm(enumerate(self.train_dataloader)):
+        for batch_idx_llm, ((images_id, images, reports_ids, reports_masks, seq_length), 
+                           (images_id_surr_ft, images_surr_ft, reports_ids_surr_ft, reports_masks_surr_ft, seq_length_ft)) in tqdm(enumerate(zip(self.train_dataloader, cycle(self.test_dataloader)))): #because ft is less than train here
             
             images, reports_ids, reports_masks = images.to(self.device), reports_ids.to(self.device), reports_masks.to(self.device)
             
@@ -331,51 +316,55 @@ class FineTuner(BaseTrainer):
             output = self.model(images, reports_ids, mode='train')
 
             loss_lang = self.criterion(output, reports_ids, reports_masks)
-            
-            #jsd = jsd_loss(output+epsilon, output_ref+epsilon)
-
-            #print('JSD loss', jsd)
             print('Cross entropy loss', loss_lang)
             #print(loss_lang.item())
             loss_llm+=loss_lang.item()#.append(loss_lang.item())
             print('cumulative loss: ', loss_llm)
             
             print('Running sample mode')
-            #self.model.eval()
-            output_surr, latent = self.model(images,reports_ids, mode='sample')
-            #print(latent.dtype)
-            output_surr_ft, lat_vec_ft = self.model(images_ft,reports_ids_ft, mode='sample')
-            loaded_data = torch.load('/home/debodeep.banerjee/R2Gen/train_min_max_scalar_only_find.pt')
-
+            
+            #latent, output_surr = self.model(images,reports_ids, mode='sample')
+            latent, seq, gs_logps_tr = self.model(images, mode='gumbel')
+            lat_vec_ft, seq_ft, gs_logps_ft = self.model(images_ft, mode='gumbel')
+            
+            loaded_data = torch.load(self.min_max_scaler)
+            #print('seq: ', seq)
+            #print('seq ft: ', seq_ft)
             # Retrieve the min and max tensors
             min_tensor = loaded_data['min']
             max_tensor = loaded_data['max']
             min_tensor = min_tensor.to(self.device)
             max_tensor = max_tensor.to(self.device)
-            test_x_ft = lat_vec_ft.sub(min_tensor).div(max_tensor - min_tensor)
-            test_x_ft = test_x_ft.to(torch.float32)
+            embeddings= self.model.encoder_decoder.model.tgt_embed
 
-            test_x_tr = latent.sub(min_tensor).div(max_tensor - min_tensor) 
-            test_x_tr = test_x_tr.to(torch.float32)   
-            #test_x_tr = latent# torch_minmax(latent, self.device)
+            # we don't need this if we  are not using the embeddings
+            #embedded_sentence = embeddings(seq)
+            #embedded_sentence_ft = embeddings(seq_ft)
+
+            # sequence lengths
+            sequence_lengths_tr = torch.tensor([len(k) for k in seq]).to(torch.int64)
+            sequence_lengths_ft = torch.tensor([len(k_ft) for k_ft in seq_ft]).to(torch.int64)
+            
             print(self.surrogate_model)
-            surrogate = torch.load(self.surrogate_model)   
+            
+            surrogate_checkpoint = torch.load(self.surrogate_model)   
+            surrogate = LSTM_Attn(gs_logps_tr.size(-1), 256, 2)#,num_layers, output_size,3,dropout_rate=0.2)
             surrogate = surrogate.to(self.device)
+            surrogate.load_state_dict(surrogate_checkpoint)
+            
             for params in surrogate.parameters():
                 params.requires_grad = False
-            #regression_params = surrogate.parameters()
-             
-            predicted_ft = surrogate(test_x_ft)
+            
+            predicted_ft = surrogate(gs_logps_ft,sequence_lengths_ft)
+            predicted_ft = predicted_ft[:,:,1]
             #print('predicted ft: ', predicted_ft)
-            surr_ft_score = torch.mean(predicted_ft)
-            #surr_ft_score = surr_ft_score.clone().requires_grad_(True)
-            print('surrogate finetune score: ', surr_ft_score)
-
-            predicted_tr = surrogate(test_x_tr)
-            #print('predicted train: ', predicted_tr)
-            surr_tr_score = torch.mean(predicted_tr)
+            predicted_tr = surrogate(gs_logps_tr,sequence_lengths_tr)
+            predicted_ft = predicted_tr[:,:,1]
+            surr_tr_score = torch.mean(torch.sigmoid(predicted_tr))
+            surr_ft_score = torch.mean(torch.sigmoid(predicted_ft))
             #surr_tr_score = surr_tr_score.clone().requires_grad_(True)
             print('surr train score: ', surr_tr_score)
+            print('surr fine-tune score: ', surr_ft_score)
             print('ce loss: ', loss_lang)
             surrogate_loss = surr_ft_score+surr_tr_score
             tot_surr_loss+=surrogate_loss.item()
@@ -416,15 +405,20 @@ class FineTuner(BaseTrainer):
         with torch.no_grad():
             count_val=0
             val_gts, val_res, val_inf_pred = [], [],[]
-            for batch_idx_val, (images_id, images, reports_ids, reports_masks) in enumerate(self.val_dataloader):
+            for batch_idx_val, (images_id, images, reports_ids, reports_masks, seq_length) in enumerate(self.val_dataloader):
                 images, reports_ids, reports_masks = images.to(self.device), reports_ids.to(
                     self.device), reports_masks.to(self.device)
-                output,_, predicted_ft = self.model(images, mode='surrogate')
-                #print(predicted_ft)
-                #output_val,_ = self.model(images, mode='sample')
-                predicted_ft = [item for sublist in predicted_ft.tolist() for item in sublist]
-                val_inf_pred.extend(predicted_ft)
-                reports = self.model.tokenizer.decode_batch(output.cpu().numpy())
+                latent_val, seq_val, gs_logps_val = self.model(images, mode='gumbel')
+                sequence_lengths_val = torch.tensor([len(k) for k in seq_val]).to(torch.int64)
+
+                surrogate_checkpoint = torch.load(self.surrogate_model)   
+                surrogate = LSTM_Attn(gs_logps_tr.size(-1), 256, 2)#,num_layers, output_size,3,dropout_rate=0.2)
+                surrogate = surrogate.to(self.device)
+                surrogate.load_state_dict(surrogate_checkpoint)
+                predicted_val = surrogate(gs_logps_val,sequence_lengths_val)
+                predicted_val = predicted_val[:,:,1]
+
+                reports = self.model.tokenizer.decode_batch(seq_val.cpu().numpy())
                 ground_truths = self.model.tokenizer.decode_batch(reports_ids[:, 1:].cpu().numpy())
                 val_res.extend(reports)
                 val_gts.extend(ground_truths)
@@ -438,8 +432,8 @@ class FineTuner(BaseTrainer):
             #print(val_met)                       
             log.update(**{'val_' + k: v for k, v in val_met.items()})
         #torch.cuda.empty_cache()
-        print('len val info sc:', len(val_inf_pred))
-        mean_inf_sc = np.mean(val_inf_pred)
+        print('len val info sc:', len(predicted_val))
+        mean_inf_sc = torch.mean(torch.sigmoid(predicted_val))
         wandb.log({'validation info score':mean_inf_sc})
-        log.update(**{'val info score: ': mean_inf_sc})
+        log.update(**{'val info score: ': mean_inf_sc.item()})
         return log, hdm_loss, val_inf_pred #this should be replaced by hdm_loss

@@ -17,10 +17,10 @@ class Tokenizer(object):
         self.token2idx, self.idx2token = self.create_vocabulary()
 
     def create_vocabulary(self):
-        total_tokens = []
+        total_tokens = ['[<sep>]']
 
         for example in self.ann['train']:
-            tokens = self.clean_report(example['report']).split()
+            tokens = self.clean_report(example['findings']).split()
             for token in tokens:
                 total_tokens.append(token)
 
