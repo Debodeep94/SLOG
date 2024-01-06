@@ -97,7 +97,7 @@ class BaseTrainer(object):
     
     wandb.init(
         # set the wandb project where this run will be logged
-        project="Finetune_Lamda_1",
+        project="Finetune_Lamda_001",
         
         # track hyperparameters and run metadata
         config={
@@ -164,15 +164,15 @@ class BaseTrainer(object):
         #print(val_info_scores)
         # plot information score boxplot
         fig_box = plt.figure()
-        plt.boxplot(val_info_scores)
-        plt.title('Box plot of information scores of validation data over epochs')
-        plt.savefig('/home/debodeep.banerjee/R2Gen/plots/only_find/'+str(self.ce_weight).replace('.', '_')+'_SR'+str(self.surr_weight).replace('.', '_')+'.png')
-        plt.close(fig_box)
+        #plt.boxplot(val_info_scores)
+        #plt.title('Box plot of information scores of validation data over epochs')
+        #plt.savefig('/home/debodeep.banerjee/R2Gen/plots/only_find/'+str(self.ce_weight).replace('.', '_')+'_SR'+str(self.surr_weight).replace('.', '_')+'.png')
+        #plt.close(fig_box)
         # plot train list
         fig=plt.figure()
         plt.plot(loss)
         plt.title('Train+Finetune')
-        plt.savefig('/home/debodeep.banerjee/R2Gen/only_find/'+str(self.ce_weight).replace('.', '_')+'_SR'+str(self.surr_weight).replace('.', '_')+'.png')
+        #plt.savefig('/home/debodeep.banerjee/R2Gen/only_find/'+str(self.ce_weight).replace('.', '_')+'_SR'+str(self.surr_weight).replace('.', '_')+'.png')
         plt.close(fig)
 
         return log
@@ -324,8 +324,8 @@ class FineTuner(BaseTrainer):
             print('Running sample mode')
             
             #latent, output_surr = self.model(images,reports_ids, mode='sample')
-            latent, seq, gs_logps_tr = self.model(images, mode='gumbel')
-            lat_vec_ft, seq_ft, gs_logps_ft = self.model(images_ft, mode='gumbel')
+            latent, seq, gs_logps_tr = self.model(images, mode='sample')
+            lat_vec_ft, seq_ft, gs_logps_ft = self.model(images_ft, mode='sample')
             
             loaded_data = torch.load(self.min_max_scaler)
             #print('seq: ', seq)
@@ -333,9 +333,9 @@ class FineTuner(BaseTrainer):
             # Retrieve the min and max tensors
             min_tensor = loaded_data['min']
             max_tensor = loaded_data['max']
-            min_tensor = min_tensor.to(self.device)
-            max_tensor = max_tensor.to(self.device)
-            embeddings= self.model.encoder_decoder.model.tgt_embed
+            #min_tensor = min_tensor.to(self.device)
+            #max_tensor = max_tensor.to(self.device)
+            #embeddings= self.model.encoder_decoder.model.tgt_embed
 
             # we don't need this if we  are not using the embeddings
             #embedded_sentence = embeddings(seq)
@@ -348,7 +348,7 @@ class FineTuner(BaseTrainer):
             print(self.surrogate_model)
             
             surrogate_checkpoint = torch.load(self.surrogate_model)   
-            surrogate = LSTM_Attn(gs_logps_tr.size(-1), 256, 2)#,num_layers, output_size,3,dropout_rate=0.2)
+            surrogate = LSTM_Attn(gs_logps_tr.size(-1),1024, 2)#,num_layers, output_size,3,dropout_rate=0.2)
             surrogate = surrogate.to(self.device)
             surrogate.load_state_dict(surrogate_checkpoint)
             
@@ -360,8 +360,8 @@ class FineTuner(BaseTrainer):
             #print('predicted ft: ', predicted_ft)
             predicted_tr = surrogate(gs_logps_tr,sequence_lengths_tr)
             predicted_ft = predicted_tr[:,:,1]
-            surr_tr_score = torch.mean(torch.sigmoid(predicted_tr))
-            surr_ft_score = torch.mean(torch.sigmoid(predicted_ft))
+            surr_tr_score = torch.mean(predicted_tr)
+            surr_ft_score = torch.mean(predicted_ft)
             #surr_tr_score = surr_tr_score.clone().requires_grad_(True)
             print('surr train score: ', surr_tr_score)
             print('surr fine-tune score: ', surr_ft_score)
@@ -410,20 +410,24 @@ class FineTuner(BaseTrainer):
                     self.device), reports_masks.to(self.device)
                 latent_val, seq_val, gs_logps_val = self.model(images, mode='gumbel')
                 sequence_lengths_val = torch.tensor([len(k) for k in seq_val]).to(torch.int64)
+                #embeddings= self.model.encoder_decoder.model.tgt_embed
 
+                # we don't need this if we  are not using the embeddings
+                #embedded_sentence_val = embeddings(seq_val)
                 surrogate_checkpoint = torch.load(self.surrogate_model)   
-                surrogate = LSTM_Attn(gs_logps_tr.size(-1), 256, 2)#,num_layers, output_size,3,dropout_rate=0.2)
+                surrogate = LSTM_Attn(gs_logps_val.size(-1), 1024, 2)#,num_layers, output_size,3,dropout_rate=0.2)
                 surrogate = surrogate.to(self.device)
                 surrogate.load_state_dict(surrogate_checkpoint)
                 predicted_val = surrogate(gs_logps_val,sequence_lengths_val)
                 predicted_val = predicted_val[:,:,1]
+                val_inf_pred.extend(predicted_val)
 
                 reports = self.model.tokenizer.decode_batch(seq_val.cpu().numpy())
                 ground_truths = self.model.tokenizer.decode_batch(reports_ids[:, 1:].cpu().numpy())
                 val_res.extend(reports)
                 val_gts.extend(ground_truths)
                 #count_val=count_val+1
-
+            concatenated_tensor = torch.cat(val_inf_pred)
             print('pred text', val_res)
             
             print('grund truth text', val_gts)
@@ -433,7 +437,7 @@ class FineTuner(BaseTrainer):
             log.update(**{'val_' + k: v for k, v in val_met.items()})
         #torch.cuda.empty_cache()
         print('len val info sc:', len(predicted_val))
-        mean_inf_sc = torch.mean(torch.sigmoid(predicted_val))
+        mean_inf_sc = torch.mean(concatenated_tensor)
         wandb.log({'validation info score':mean_inf_sc})
         log.update(**{'val info score: ': mean_inf_sc.item()})
         return log, hdm_loss, val_inf_pred #this should be replaced by hdm_loss

@@ -18,6 +18,7 @@ import torch
 import itertools
 import csv
 import torch
+from modules.rnn_surrogate import *
 #from torchviz import make_dot
 #from torchsummary import summary
 import matplotlib.pyplot as plt
@@ -97,36 +98,29 @@ class SurrogateTester(BaseTester):
                     self.device), reports_masks.to(self.device), seq_length.to(self.device)
                 print('entering inference...')
                 #print('image id: ', images_id)
-                sample_lps, seq, gs_logps = self.model(images, mode='gumbel')
-                #print('latent: ', latent)
-                #print('latent size: ', latent.size())
+                sample_lps, seq, gs_logps = self.model(images, mode='sample')
+                print('logps: ', gs_logps)
+                print('logps size: ', gs_logps.size())
                 latent= torch.split(sample_lps, split_size_or_sections=1, dim=0)
                 reports = self.model.tokenizer.decode_batch(seq.cpu().numpy())
                 print('report printing')
                 print('seq_length: ', seq_length)
-                # min max scalaer
-                loaded_data = torch.load(self.min_max_scaler)
-                # Retrieve the min and max tensors
-                min_tensor = loaded_data['min']
-                max_tensor = loaded_data['max']
-                min_tensor = min_tensor.to(self.device)
-                max_tensor = max_tensor.to(self.device)
-
-                gs_logps_test = torch.mean(gs_logps, dim=1)
-                test_x_test = gs_logps_test.sub(min_tensor).div(max_tensor - min_tensor) 
-                test_x_test = test_x_test.to(torch.float32)   
-                test_x_test = test_x_test/torch.norm(test_x_test,dim=1, keepdim=True)
-                print(self.surrogate_model)
-                
-                surrogate = torch.load(self.surrogate_model)   
+                sequence_lengths = torch.tensor([len(k) for k in seq]).to(torch.int64)
+                embeddings= self.model.encoder_decoder.model.tgt_embed
+                # we don't need this if we  are not using the embeddings
+                embedded_sentence_test = embeddings(seq)
+                surrogate_checkpoint = torch.load(self.surrogate_model)   
+                surrogate = LSTM_Attn(gs_logps.size(-1), 1024, 2)#,num_layers, output_size,3,dropout_rate=0.2)
                 surrogate = surrogate.to(self.device)
-                predicted_test = surrogate(test_x_test)
+                surrogate.load_state_dict(surrogate_checkpoint)
+                predicted = surrogate(gs_logps,sequence_lengths)
+                predicted = predicted[:,:,1]
                 reports = self.model.tokenizer.decode_batch(seq.cpu().numpy())
                 ground_truths = self.model.tokenizer.decode_batch(reports_ids[:, 1:].cpu().numpy())
                 test_res.extend(reports)
                 test_gts.extend(ground_truths)
                 latent_rep_check.extend(latent)
-                pred_info_scores.extend(predicted_test)
+                pred_info_scores.extend(predicted)
                 count = count + 1 
                 #if count == 5:
                     #break

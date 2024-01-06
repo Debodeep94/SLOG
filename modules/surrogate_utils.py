@@ -104,6 +104,8 @@ class Metrics(object):
             # metrics['Micro F1 ' + self.cond_names[i]] = f1_score(y_true, y_pred, average='micro')
 
         # Compute global metrics
+        #print(f"printing outputs.....:{self.y_pred}")
+        #print(f"printing gts.....:{self.y_true}")
         master_y_true = torch.cat([inner for outer in self.y_true for inner in outer])
         master_y_pred = torch.cat([inner for outer in self.y_pred for inner in outer])
 

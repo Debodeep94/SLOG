@@ -148,8 +148,8 @@ class AttModel(CaptionModel):
         selected_latents = torch.empty(len(self.done_beams), 512, device=hidden_states.device)  # Assuming 'device' is the appropriate device (e.g., 'cuda') for the tensors
         for i, (beam, seq_len) in enumerate(zip(self.done_beams, seq_lens)):
             selected_latents[i] = beam[0]['lat'][seq_len - 1]
-        gumbel_softmax_sample = gumbel_softmax(seqLogprobs, temperature=1.0, beta=0.5)
-        return selected_latents, seq, gumbel_softmax_sample #what is seqlogprobs
+        #gumbel_softmax_sample = gumbel_softmax(seqLogprobs, temperature=1.0, beta=0.5)
+        return selected_latents, seq, seqLogprobs #what is seqlogprobs
 
 
     def _sample(self, fc_feats, att_feats, att_masks=None, update_opts={}):

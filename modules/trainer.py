@@ -165,11 +165,11 @@ class BaseTrainer(object):
             'optimizer': self.optimizer.state_dict(),
             'monitor_best': self.mnt_best
         }
-        filename = os.path.join(self.checkpoint_dir, 'current_checkpoint.pth')
+        filename = os.path.join(self.checkpoint_dir, 'current_checkpoint_full_no_gumbel.pth')
         torch.save(state, filename)
         print("Saving checkpoint: {} ...".format(filename))
         if save_best:
-            best_path = os.path.join(self.checkpoint_dir, 'best_model.pth')
+            best_path = os.path.join(self.checkpoint_dir, 'best_model_full_no_gumbel.pth')
             torch.save(state, best_path)
             print("Saving current best: model_best.pth ...")
 
@@ -247,11 +247,11 @@ class Trainer(BaseTrainer):
             val_gts, val_res = [], []
             for batch_idx, (images_id, images, reports_ids, reports_masks, seq_length) in enumerate(self.val_dataloader):
                 images, reports_ids, reports_masks = images.to(self.device), reports_ids.to(self.device), reports_masks.to(self.device)
-                latent,seq, gs_logps = self.model(images, mode='gumbel')
+                latent,seq, gs_logps = self.model(images, mode='sample')
                 # Separate 'findings' and 'impression' based on [SEP] token
                 reports = self.model.tokenizer.decode_batch(seq.cpu().numpy())
                 #print(reports)
-                sep_index = '[<sep>]'
+                
                 #parts = reports[0].split(sep_index, 1)  # Split into two parts, assuming the first [SEP] separates 'findings' and 'impression'
                 #findings = parts[0].strip() if len(parts) > 0 else ''
                 #impression = parts[1].strip() if len(parts) > 1 else ''
