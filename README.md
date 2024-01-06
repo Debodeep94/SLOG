@@ -15,3 +15,7 @@ Codes - [R2Gen](https://github.com/zhjohnchan/R2Gen)
 Paper - [Learning to Generate Clinically Coherent Chest X-Ray Reports](https://aclanthology.org/2020.findings-emnlp.110.pdf)
 
 Codes - [Click here](https://github.com/justinlovelace/coherent-xray-report-generation)
+
+
+For the chexpert evaluation, please follow these instruction:
+[Click here](https://github.com/MIT-LCP/mimic-cxr/tree/master/txt/chexpert)
