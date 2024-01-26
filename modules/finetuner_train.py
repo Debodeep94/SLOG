@@ -38,7 +38,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from modules.utils import EarlyStopping#, torch_minmax
 from torch.utils.data import DataLoader, ConcatDataset
 import torch.nn.functional as F
-import wandb
+#import wandb
 from modules.rnn_surrogate import *
 
 print('GPU availability: ', torch.cuda.is_available())
@@ -93,11 +93,11 @@ class BaseTrainer(object):
         #self.writer = SummaryWriter(log_dir='logs')
 
         self.surrogate_model = args.surrogate_model
-    print('DID YOU PUT A CORRECT LAMBDA VALUE TO THE WANDB CONFIG?????')
+    #print('DID YOU PUT A CORRECT LAMBDA VALUE TO THE WANDB CONFIG?????')
     
-    wandb.init(
+    '''wandb.init(
         # set the wandb project where this run will be logged
-        project="Finetune_Lamda_001",
+        project="Finetune_Lamda_0",
         
         # track hyperparameters and run metadata
         config={
@@ -105,7 +105,7 @@ class BaseTrainer(object):
         "dataset": "mimic train 10845",
         "epochs": 100,
             }
-        )
+        )'''
     @abstractmethod
     
     def _train_epoch(self, epoch):
@@ -326,20 +326,11 @@ class FineTuner(BaseTrainer):
             #latent, output_surr = self.model(images,reports_ids, mode='sample')
             latent, seq, gs_logps_tr = self.model(images, mode='sample')
             lat_vec_ft, seq_ft, gs_logps_ft = self.model(images_ft, mode='sample')
-            
-            loaded_data = torch.load(self.min_max_scaler)
-            #print('seq: ', seq)
-            #print('seq ft: ', seq_ft)
-            # Retrieve the min and max tensors
-            min_tensor = loaded_data['min']
-            max_tensor = loaded_data['max']
-            #min_tensor = min_tensor.to(self.device)
-            #max_tensor = max_tensor.to(self.device)
-            #embeddings= self.model.encoder_decoder.model.tgt_embed
+            embeddings= self.model.encoder_decoder.model.tgt_embed
 
             # we don't need this if we  are not using the embeddings
-            #embedded_sentence = embeddings(seq)
-            #embedded_sentence_ft = embeddings(seq_ft)
+            embedded_sentence_tr = embeddings(seq)
+            embedded_sentence_ft = embeddings(seq_ft)
 
             # sequence lengths
             sequence_lengths_tr = torch.tensor([len(k) for k in seq]).to(torch.int64)
@@ -348,17 +339,17 @@ class FineTuner(BaseTrainer):
             print(self.surrogate_model)
             
             surrogate_checkpoint = torch.load(self.surrogate_model)   
-            surrogate = LSTM_Attn(gs_logps_tr.size(-1),1024, 2)#,num_layers, output_size,3,dropout_rate=0.2)
+            surrogate = LSTM_Attn(embedded_sentence_tr.size(-1),512, 2)#,num_layers, output_size,3,dropout_rate=0.2)
             surrogate = surrogate.to(self.device)
             surrogate.load_state_dict(surrogate_checkpoint)
             
             for params in surrogate.parameters():
                 params.requires_grad = False
             
-            predicted_ft = surrogate(gs_logps_ft,sequence_lengths_ft)
+            predicted_ft = surrogate(embedded_sentence_ft,sequence_lengths_ft)
             predicted_ft = predicted_ft[:,:,1]
             #print('predicted ft: ', predicted_ft)
-            predicted_tr = surrogate(gs_logps_tr,sequence_lengths_tr)
+            predicted_tr = surrogate(embedded_sentence_tr,sequence_lengths_tr)
             predicted_ft = predicted_tr[:,:,1]
             surr_tr_score = torch.mean(predicted_tr)
             surr_ft_score = torch.mean(predicted_ft)
@@ -391,10 +382,10 @@ class FineTuner(BaseTrainer):
         log = {'total cross entropy loss: ': loss_llm/ count}
         log.update(**{'total hdm loss: ': hybrid/ count})
 
-        wandb.log({"Cross entropy loss": loss_llm/ count,
+        '''wandb.log({"Cross entropy loss": loss_llm/ count,
                         'surrogate loss': tot_surr_loss/ count,
                         'hdm_loss': hybrid/ count
-                        })
+                        })'''
         print(len(self.train_dataloader))
         print('log: ', log)
         
@@ -410,15 +401,15 @@ class FineTuner(BaseTrainer):
                     self.device), reports_masks.to(self.device)
                 latent_val, seq_val, gs_logps_val = self.model(images, mode='gumbel')
                 sequence_lengths_val = torch.tensor([len(k) for k in seq_val]).to(torch.int64)
-                #embeddings= self.model.encoder_decoder.model.tgt_embed
+                embeddings= self.model.encoder_decoder.model.tgt_embed
 
                 # we don't need this if we  are not using the embeddings
-                #embedded_sentence_val = embeddings(seq_val)
+                embedded_sentence_val = embeddings(seq_val)
                 surrogate_checkpoint = torch.load(self.surrogate_model)   
-                surrogate = LSTM_Attn(gs_logps_val.size(-1), 1024, 2)#,num_layers, output_size,3,dropout_rate=0.2)
+                surrogate = LSTM_Attn(embedded_sentence_val.size(-1), 512, 2)#,num_layers, output_size,3,dropout_rate=0.2)
                 surrogate = surrogate.to(self.device)
                 surrogate.load_state_dict(surrogate_checkpoint)
-                predicted_val = surrogate(gs_logps_val,sequence_lengths_val)
+                predicted_val = surrogate(embedded_sentence_val,sequence_lengths_val)
                 predicted_val = predicted_val[:,:,1]
                 val_inf_pred.extend(predicted_val)
 
@@ -438,6 +429,6 @@ class FineTuner(BaseTrainer):
         #torch.cuda.empty_cache()
         print('len val info sc:', len(predicted_val))
         mean_inf_sc = torch.mean(concatenated_tensor)
-        wandb.log({'validation info score':mean_inf_sc})
+        #wandb.log({'validation info score':mean_inf_sc})
         log.update(**{'val info score: ': mean_inf_sc.item()})
         return log, hdm_loss, val_inf_pred #this should be replaced by hdm_loss

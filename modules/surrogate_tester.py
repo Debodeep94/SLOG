@@ -110,7 +110,7 @@ class SurrogateTester(BaseTester):
                 # we don't need this if we  are not using the embeddings
                 embedded_sentence_test = embeddings(seq)
                 surrogate_checkpoint = torch.load(self.surrogate_model)   
-                surrogate = LSTM_Attn(gs_logps.size(-1), 1024, 2)#,num_layers, output_size,3,dropout_rate=0.2)
+                surrogate = LSTM_Attn(gs_logps.size(-1), 2048, 2)#,num_layers, output_size,3,dropout_rate=0.2)
                 surrogate = surrogate.to(self.device)
                 surrogate.load_state_dict(surrogate_checkpoint)
                 predicted = surrogate(gs_logps,sequence_lengths)

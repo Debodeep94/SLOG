@@ -20,12 +20,73 @@ def count (tensor_data):
     counts=counts.sum(dim=0)
     return counts
 
-def count_weights(tensor_data):
+def count_weights(tensor_data,val):
     counts=count ( tensor_data)
     #print(counts)
-    weights=counts[0]/counts
-    weights = torch.clamp(weights, max=15)
+    weights=counts[val]/counts
+    weights = torch.clamp(weights,max=15)
     return weights#/300
+
+def first_surr_split(tensor_X, sequence_X, weight_X, y_vals, train_ratio=0.9):
+    """
+    tensor_X: combined list of predicted logprobs and ground truth logprobs
+    sequence_X: combined list of sequence length of predicted sentences and gt sentences
+    weight_X: combined list of weights for predicted sentences and gt sentences
+    y_vals: groung truth labels for impression section
+    """
+    num_samples = len(tensor_X)
+    print('num sample: ', num_samples)
+    # Calculate the number of samples for each split
+    num_train_samples = int(train_ratio * num_samples)
+    #num_val_samples = int(val_ratio * num_samples)
+    num_test_samples = num_samples - num_train_samples# - num_val_samples
+
+    # Split the synthetic inputs into tensors
+    tensors_train = tensor_X[:num_train_samples]
+    tensors_test = tensor_X[num_train_samples:]# + num_val_samples:]
+    # Stack tensors along dimension 0
+    train_x= torch.stack(tensors_train, dim=0)
+    print('train shape:',train_x.size())
+    test_x= torch.stack(tensors_test, dim=0)
+    seq_train = sequence_X[:num_train_samples]
+    seq_test = sequence_X[num_train_samples:]
+    wt_train = weight_X[:num_train_samples]
+    
+    tensors_train_y = y_vals[:num_train_samples]
+    tensors_test_y = y_vals[num_train_samples:]
+    train_y=torch.tensor(tensors_train_y)
+    test_y=torch.tensor(tensors_test_y)
+
+    # convert sequence and weights to tensor
+    seq_train = torch.tensor(seq_train)
+    wt_train = torch.tensor(wt_train)
+    #seq_val = torch.tensor(seq_val)
+    seq_test = torch.tensor(seq_test)
+    weights = count_weights(train_y) #weights for CE loss (neg/pos)
+
+    # Create DataLoader for training set, validation set, and test set
+    train_dataset = TensorDataset(train_x, train_y, seq_train, wt_train)
+    test_dataset = TensorDataset(test_x, test_y, seq_test)
+    input_size, output_size= train_x.size(-1), train_y.size(1)
+    print(test_y.size())
+    print(seq_test.size())
+    print(test_x.size())
+    return weights, input_size, output_size, train_dataset, test_dataset
+
+def prepare_data(tensor_X_gt,tensor_X_pred, sequence_X_gt,sequence_X_pred, y_vals):
+
+    # As of now we are not using weights as the model is trained with gt data
+    X_gt= torch.stack(tensor_X_gt, dim=0)
+    X_pred= torch.stack(tensor_X_pred, dim=0)
+    Y=torch.tensor(y_vals)
+    # convert sequence and weights to tensor
+    seq_X_gt = torch.tensor(sequence_X_gt)
+    seq_X_pred = torch.tensor(sequence_X_pred)
+    #weight_X = torch.tensor(weight_X)
+    #ce_weights = count_weights(y_vals)
+    return X_gt, X_pred, Y, seq_X_gt, seq_X_pred
+
+
 
 def clip_gradient(optimizer, grad_clip):
     """
@@ -141,3 +202,4 @@ class AverageMeter(object):
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
+

@@ -18,7 +18,7 @@ class BaseDataset(Dataset):
         self.examples = self.ann[self.split]
        # print(self.examples)
         for i in range(len(self.examples)):
-            self.examples[i]['ids'] = tokenizer(self.examples[i]['findings'])[:self.max_seq_length]
+            self.examples[i]['ids'] = tokenizer(self.examples[i]['findings'])[:self.max_seq_length+1]
             self.examples[i]['mask'] = [1] * len(self.examples[i]['ids'])
 
     def __len__(self):
@@ -52,7 +52,9 @@ class MimiccxrSingleImageDataset(BaseDataset):
         if self.transform is not None:
             image = self.transform(image)
         report_ids = example['ids']
+        #print('report_ids: ', report_ids)
         report_masks = example['mask']
         seq_length = len(report_ids)
+        #print('seq len report ids: ', seq_length)
         sample = (image_id, image, report_ids, report_masks, seq_length)
         return sample

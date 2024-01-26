@@ -75,12 +75,12 @@ class CaptionModel(nn.Module):
                 assert logprobs.shape[1] == 1
                 beam_logprobs_sum = beam_logprobs_sum[:, :1]
             candidate_logprobs = beam_logprobs_sum.unsqueeze(-1) + logprobs  # beam_logprobs_sum Nxb logprobs is NxbxV
-            #ys, ix = torch.sort(candidate_logprobs.reshape(candidate_logprobs.shape[0], -1), -1, True) 
-            #ys, ix = ys[:, :beam_size], ix[:, :beam_size]
-            # torch.sort is not differentiable. In order to make ir differentiable, we use torch.sort() and torch.gather()
-            ix = torch.argsort(candidate_logprobs.reshape(candidate_logprobs.shape[0], -1), -1, True)
-            ys = torch.gather(candidate_logprobs.reshape(candidate_logprobs.shape[0], -1),-1,ix) #(tensor, dim, indices)
+            ys, ix = torch.sort(candidate_logprobs.reshape(candidate_logprobs.shape[0], -1), -1, True) 
             ys, ix = ys[:, :beam_size], ix[:, :beam_size]
+            # torch.sort is not differentiable. In order to make ir differentiable, we use torch.sort() and torch.gather()
+            #ix = torch.argsort(candidate_logprobs.reshape(candidate_logprobs.shape[0], -1), -1, True)
+            #ys = torch.gather(candidate_logprobs.reshape(candidate_logprobs.shape[0], -1),-1,ix) #(tensor, dim, indices)
+            #ys, ix = ys[:, :beam_size], ix[:, :beam_size]
             beam_ix = ix // vocab_size  # Nxb which beam- the variable beam_ix is used to determine which beam (sequence) index each word in the logprobs tensor belongs to
             selected_ix = ix % vocab_size  # Nxb # which world
             state_ix = (beam_ix + torch.arange(batch_size).type_as(beam_ix).unsqueeze(-1) * logprobs.shape[1]).reshape(

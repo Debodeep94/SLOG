@@ -6,9 +6,9 @@ import pandas as pd
 import ast
 import cv2
 import torch
-import wandb
+#import wandb
 import numpy as np
-from modules.utils import generate_heatmap, convert#, surrogate_regression, surrogate_split
+from modules.utils import generate_heatmap#, convert#, surrogate_regression, surrogate_split
 from surrogate import SurrogateModel, SurrogateLoss, CustomRidgeLoss, RidgeRegression
 from pycocoevalcap.bleu.bleu import Bleu
 from tqdm import tqdm
@@ -30,6 +30,7 @@ from sklearn.preprocessing import MinMaxScaler
 import torch.nn.functional as F
 from sklearn.metrics import precision_recall_fscore_support
 import time
+from sklearn.model_selection import train_test_split
 from modules.surrogate_utils import *
 from torch.utils.data import TensorDataset, DataLoader, random_split
 import copy
@@ -38,23 +39,39 @@ import copy
 # code for second surrogate
 torch.cuda.empty_cache()
 print(torch.cuda.memory_summary())
-path = '/home/debodeep.banerjee/R2Gen/surrogate_vectors/with_lps/'
-sur2_data=torch.load( path+'sur2_data.pt')
-val_accs=torch.load( path+'val_accs.pt')
-val_seq=torch.load(path+'val_seq.pt')
-surr_2_x = torch.stack([item for sublist in sur2_data for item in sublist])# torch.cat(sur2_data[0], dim=0)#test_x#torch.mean(test_x, dim=1)
+path = '/nfs/data_chaos/dbanerjee/my_data/R2Gen/surrogate/data/lps/'
+sur2_data_gt_emb=torch.load( path+'sur2_data_gt_emb.pt')
+sur2_data_pred_emb=torch.load( path+'sur2_data_pred_emb.pt')
+surr_2_x_gt = torch.stack([item for sublist in sur2_data_gt_emb for item in sublist])
+surr_2_x_pred = torch.stack([item for sublist in sur2_data_pred_emb for item in sublist])
+
+print(surr_2_x_gt.size())
+print(surr_2_x_pred.size())
+surr_2_x=torch.cat((surr_2_x_gt,surr_2_x_pred), dim=0)
+print(surr_2_x.size())
+val_seq_gt=torch.load(path+'val_seq_gt_emb.pt')
+val_seq_pred=torch.load(path+'val_seq_pred_emb.pt')
+surr_2_seq_gt = torch.stack([item for sublist in val_seq_gt for item in sublist])
+surr_2_seq_pred = torch.stack([item for sublist in val_seq_pred for item in sublist])
+surr_2_seq = torch.cat((surr_2_seq_gt,surr_2_seq_pred), dim=0)
+val_accs_gt=torch.load( path+'val_accs_gt_emb.pt')
+val_accs_pred=torch.load( path+'val_accs_pred_emb.pt')
+surr_2_y_gt = torch.stack([item for sublist in val_accs_gt for item in sublist])
+surr_2_y_pred = torch.stack([item for sublist in val_accs_pred for item in sublist])
+surr_2_y = torch.cat((surr_2_y_gt,surr_2_y_pred), dim=0)
 print(torch.cuda.memory_summary())
-print(f'sur2x: {surr_2_x.size()}')
-surr_2_y = torch.stack([item for sublist in val_accs for item in sublist])
-surr_2_seq = torch.stack([item for sublist in val_seq for item in sublist])
-
-X = surr_2_x.cpu().detach().numpy()
-Y = surr_2_y.cpu().detach().numpy()
-seq_data = surr_2_seq.cpu().detach().numpy()
+print(f'sur2y: {surr_2_y.size()}')
+print(f'surseq: {surr_2_seq.size()}')
 
 
 
-train_x=X[:int(len(X)*0.85)]
+X = surr_2_x.detach().numpy()
+Y = surr_2_y.detach().numpy()
+seq_data = surr_2_seq.detach().numpy()
+
+
+
+'''train_x=X[:int(len(X)*0.85)]
 seq_tr=seq_data[:int(len(seq_data)*0.85)]
         
 train_y=Y[:int(len(Y)*0.85)]
@@ -67,60 +84,81 @@ train_x_ = train_x[:int(len(train_x)*0.79)]
 train_y_ = train_y[:int(len(train_y)*0.79)]
 seq_tr_ = seq_tr[:int(len(seq_tr)*0.79)]
 print(train_x_.shape)
-#train_x = torch.nn.functional.normalize(train_x)
-#train_y = torch.nn.functional.normalize(train_y)
-#weight_train = torch.nn.functional.normalize(weight_train)
 
 val_x_ = train_x[int(len(train_x)*0.79):]
 val_y_ = train_y[int(len(train_y)*0.79):]
 seq_val_= seq_tr[int(len(seq_tr)*0.79):]
 
-train_x_pt = torch.tensor(train_x_,dtype=torch.float) #pt: pytorch
+'''
+
+train_x, test_x, train_y, test_y, seq_tr, seq_test=train_test_split(X,Y, seq_data,test_size=0.1, random_state=1)
+train_x, val_x, train_y, val_y, seq_tr, seq_val = train_test_split(train_x, train_y,seq_tr, test_size=0.1, random_state=1) # 0.25 x 0.8 = 0.2
+weight_train = torch.ones(len(train_x))
+
+train_x_pt = torch.tensor(train_x,dtype=torch.float) #pt: pytorch
 #train_x_pt = train_x_pt/torch.norm(train_x_pt, dim = 1, keepdim= True)
 #print('train_x_surr2: ', train_x_pt)
-seq_tr_=torch.tensor(seq_tr_, dtype=torch.int)
-val_x_pt = torch.tensor(val_x_,dtype=torch.float) #pt: pytorch
+seq_tr=torch.tensor(seq_tr, dtype=torch.int)
+val_x_pt = torch.tensor(val_x,dtype=torch.float) #pt: pytorch
 #val_x_pt = val_x_pt/torch.norm(val_x_pt, dim = 1, keepdim= True)
-seq_val_=torch.tensor(seq_val_, dtype=torch.int)
-test_x_pt = torch.tensor(test_x_,dtype=torch.float)
+seq_val=torch.tensor(seq_val, dtype=torch.int)
+test_x_pt = torch.tensor(test_x,dtype=torch.float)
 #test_x_pt = test_x_pt/torch.norm(test_x_pt, dim = 1, keepdim= True)
-seq_test_=torch.tensor(seq_test_, dtype=torch.int)
-train_y_ = torch.tensor(train_y_)
+seq_test=torch.tensor(seq_test, dtype=torch.int)
+train_y = torch.tensor(train_y)
 
-val_y_ = torch.tensor(val_y_)
-test_y_ = torch.tensor(test_y_)
+val_y = torch.tensor(val_y)
+test_y = torch.tensor(test_y)
 
-weight_train = torch.ones(len(train_x_))
+#Save the train and validation splits
+torch.save(train_y,'sec_sur_train_y.pt')
+torch.save(val_y,'sec_sur_val_y.pt')
+torch.save(test_y,'sec_sur_test_y.pt')
 
 input_size = train_x_pt.size(-1)  # Vocabulary size
-hidden_size = 1024   # Number of LSTM units
+hidden_size = 512   # Number of LSTM units
 num_layers = 8     # Number of LSTM layers
-output_size = train_y_.size(1)     # Number of output classes
+output_size = train_y.size(1)     # Number of output classes
 #print('output_size: ',output_size)
 batch_size = 512     # Batch size for training, validation, and testing
-learning_rate = 2e-5
-num_classes = train_y_.size(1)
+learning_rate = 1e-5
+num_classes = train_y.size(1)
 num_labels = 2
-num_heads = train_y_.size(1)
-weights = count_weights(train_y_)
+num_heads = train_y.size(1)
+weights = count_weights(train_y,1)
 # Instantiate the model and move it to GPU if available
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model_2 = LSTM_Attn(input_size, hidden_size, num_labels)#, num_classes, num_heads)
 model_2=model_2.to(device)
 
 # Create DataLoader for training set, validation set, and test set
-train_dataset = TensorDataset(train_x_pt, train_y_, seq_tr_)
+train_dataset = TensorDataset(train_x_pt, train_y, seq_tr)
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
-val_dataset = TensorDataset(val_x_pt, val_y_, seq_val_)
+val_dataset = TensorDataset(val_x_pt, val_y, seq_val)
 val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
-test_dataset = TensorDataset(test_x_pt, test_y_, seq_test_)
+test_dataset = TensorDataset(test_x_pt, test_y, seq_test)
 test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+classes=['No Finding',
+            'Enlarged Cardiomediastinum',
+            'Cardiomegaly',
+            'Lung Lesion',
+            'Lung Opacity',
+            'Edema',
+            'Consolidation',
+            'Pneumonia',
+            'Atelectasis',
+            'Pneumothorax',
+            'Pleural Effusion',
+            'Pleural Other',
+            'Fracture',
+            'Support Devices']
+
 
 # Accuracy surrogate
 # Instantiate the custom loss function
-criterion = torch.nn.CrossEntropyLoss(weight=(weights).to(device))#, reduction='none')
+criterion = torch.nn.CrossEntropyLoss(weights.to(device))#, reduction='none')
 criterion2 = torch.nn.CrossEntropyLoss()
 optimizer = optim.Adam(model_2.parameters(), lr=learning_rate)
 
@@ -129,7 +167,7 @@ num_epochs = 500
 val_loss_box_sur2=[]
 train_loss_box_sur2=[]
 f1_sur2=[]
-patience = 25  # Number of epochs to wait for improvement
+patience = 20  # Number of epochs to wait for improvement
 best_val_loss = float('inf')
 current_patience = 0
 best_f1 = 0.0
@@ -210,10 +248,20 @@ for epoch in range(num_epochs):
 
     # When the batch job is done, check for the metrics
     # As we have two labels, things are easier now. 
-    gt = torch.stack([item for sublist in full_batch for item in sublist])
+    all_gt = torch.stack([item for sublist in full_batch for item in sublist])
     all_preds = torch.stack([item for sublist in pred_mat for item in sublist])
+    for i in range(all_gt.size(1)):
+        gt = all_gt[:,i]
+        pred=all_preds[:,i]
+        #tn, fp, fn, tp = sklearn.metrics.confusion_matrix(gt, pred).ravel()
+        tp = ((gt == 1) & (pred == 1)).sum().item()
+        fp = ((gt == 0) & (pred == 1)).sum().item()
+        tn = ((gt == 0) & (pred == 0)).sum().item()
+        fn = ((gt == 1) & (pred == 0)).sum().item()
+        print(classes[i])
+        print(f'tp: {tp}, fp: {fp}, tn: {tn}, fn: {fn}')
     #print(all_preds)
-    f_micro = f1_score(gt.cpu(), all_preds.cpu(), average="micro")
+    f_micro = f1_score(all_gt.cpu(), all_preds.cpu(), average="micro")
     f1_sur2.append(f_micro)
     if f_micro > best_f1:# and recall > best_recall:
         best_f1 = f_micro
@@ -278,6 +326,48 @@ with torch.no_grad():
     gt = torch.stack([item for sublist in full_batch for item in sublist])
     all_preds = torch.stack([item for sublist in pred_test for item in sublist])
     f_micro = f1_score(gt.cpu(), all_preds.cpu(), average="micro") 
+    # print classwise f1
+    y_true=gt.cpu()
+    y_pred=all_preds.cpu()
+    torch.save(y_true,'sec_sur_gt.pt')
+    torch.save(y_pred,'sec_sur_pred.pt')
+    avg_f1=0
+    res_mlc_f1 = {}
+    for i, label in enumerate(classes):
+        res_mlc_f1['f1_' + label]=round((f1_score(y_true[:,i], y_pred[:,i],labels=[1], average=None, zero_division=0)[0])*100,2)
+        #print(f1)
+        avg_f1 += res_mlc_f1['f1_' + label]
+    res_mlc_f1['avg_f1'] = avg_f1 / len(classes)
+    print('res_mlc_f1: ',res_mlc_f1)
+
+    avg_recall=0
+    res_mlc_recall = {}
+    for i, label in enumerate(classes):
+        res_mlc_recall['recall_' + label]=round((recall_score(y_true[:,i], y_pred[:,i],labels=[1], average=None, zero_division=0)[0])*100,2)
+        #print(f1)
+        avg_recall += res_mlc_recall['recall_' + label]
+    res_mlc_recall['avg_recall'] = avg_recall / len(classes)
+    print('res_mlc_recall: ',res_mlc_recall)
+
+    avg_preci=0
+    res_mlc_precision = {}
+    for i, label in enumerate(classes):
+        res_mlc_precision['precision_' + label]=round((precision_score(y_true[:,i], y_pred[:,i],labels=[1], average=None, zero_division=0)[0])*100,2)
+        #print(f1)
+        avg_preci += res_mlc_precision['precision_' + label]
+    res_mlc_recall['avg_preci'] = avg_preci / len(classes)
+    print('res_mlc_precision: ',res_mlc_precision)
+    for i in range(y_true.size(1)):
+        gt = y_true[:,i]
+        pred=y_pred[:,i]
+        #tn, fp, fn, tp = sklearn.metrics.confusion_matrix(gt, pred).ravel()
+        tp = ((gt == 1) & (pred == 1)).sum().item()
+        fp = ((gt == 0) & (pred == 1)).sum().item()
+        tn = ((gt == 0) & (pred == 0)).sum().item()
+        fn = ((gt == 1) & (pred == 0)).sum().item()
+        print(classes[i])
+        print(f'tp: {tp}, fp: {fp}, tn: {tn}, fn: {fn}')
+
     print('f_micro test: ', f_micro)  
     print('test loss: ', final_test_loss) 
 
@@ -294,7 +384,7 @@ plt.xticks(fontsize=30)
 plt.yticks(fontsize=30)
 plt.legend()
 plt.title('loss curve for surrogate 2')
-plt.savefig('plots/surrogate_2_loss.png')
+plt.savefig('plots/surrogate_2_loss_new.png')
 plt.close(fig_sur2_loss)
 
 # F1 @ surrogate2
@@ -306,5 +396,5 @@ plt.xticks(fontsize=30)
 plt.yticks(fontsize=30)
 #plt.legend()
 plt.title('F1 curve for surrogate 2')
-plt.savefig('plots/surrogate_2_f1_lps_val.png')
+plt.savefig('plots/surrogate_2_f1_lps_val_new.png')
 plt.close(fig_sur2_f1)
