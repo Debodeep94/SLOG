@@ -15,19 +15,16 @@ import time
 
 
 
-def count (tensor_data, val):
-    #counts=torch.nn.functional.one_hot (tensor_data.long()).sum (dim = 0)#.sum(dim=0)
-    binary_tensor = (tensor_data == val).int()
-
-    # Count the column-wise number of 1s
-    counts = torch.sum(binary_tensor, dim=0)
-
-    print("Column-wise number of 1s:", counts)
+def count (tensor_data):
+    counts=torch.nn.functional.one_hot (tensor_data.long()).sum (dim = 0)#.sum(dim=0)
+    counts=counts.sum(dim=0)
     return counts
 
-def count_weights(tensor_data,val_num, val_den, clamp_val=25):
-    weights=count(tensor_data,val_num)/count(tensor_data,val_den)
-    weights = torch.clamp(weights,max=clamp_val)
+def count_weights(tensor_data,val):
+    counts=count ( tensor_data)
+    #print(counts)
+    weights=counts[val]/counts
+    weights = torch.clamp(weights, max=15)
     return weights#/300
 
 
