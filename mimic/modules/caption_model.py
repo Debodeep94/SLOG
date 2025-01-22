@@ -77,7 +77,7 @@ class CaptionModel(nn.Module):
             candidate_logprobs = beam_logprobs_sum.unsqueeze(-1) + logprobs  # beam_logprobs_sum Nxb logprobs is NxbxV
             ys, ix = torch.sort(candidate_logprobs.reshape(candidate_logprobs.shape[0], -1), -1, True) 
             ys, ix = ys[:, :beam_size], ix[:, :beam_size]
-            # torch.sort is not differentiable. In order to make ir differentiable, we use torch.sort() and torch.gather()
+            # torch.sort is not differentiable. In order to make ir differentiable, we use torch.argsort() and torch.gather()
             #ix = torch.argsort(candidate_logprobs.reshape(candidate_logprobs.shape[0], -1), -1, True)
             #ys = torch.gather(candidate_logprobs.reshape(candidate_logprobs.shape[0], -1),-1,ix) #(tensor, dim, indices)
             #ys, ix = ys[:, :beam_size], ix[:, :beam_size]
@@ -391,10 +391,13 @@ class CaptionModel(nn.Module):
         return done_beams
 
     def sample_next_word(self, logprobs, sample_method, temperature):
+        # print('hi')
         if sample_method == 'greedy':
             sampleLogprobs, it = torch.max(logprobs.data, 1)
             it = it.view(-1).long()
+            return it, sampleLogprobs#, _logprobs
         elif sample_method == 'gumbel':  # gumbel softmax
+            # print('hi1')
             def sample_gumbel(shape, eps=1e-20):
                 U = torch.rand(shape).cuda()
                 return -torch.log(-torch.log(U + eps) + eps)
@@ -409,7 +412,9 @@ class CaptionModel(nn.Module):
             #print('gumbel logps size: ', _logprobs.size())
             _, it = torch.max(_logprobs.data, 1)
             sampleLogprobs = logprobs.gather(1, it.unsqueeze(1))  # gather the logprobs at sampled positions
+            return it, sampleLogprobs, _logprobs
         else:
+            print('this loop')
             logprobs = logprobs / temperature
             if sample_method.startswith('top'):  # topk sampling
                 top_num = float(sample_method[3:])
@@ -431,4 +436,5 @@ class CaptionModel(nn.Module):
                     logprobs = tmp
             it = torch.distributions.Categorical(logits=logprobs.detach()).sample()
             sampleLogprobs = logprobs.gather(1, it.unsqueeze(1))  # gather the logprobs at sampled positions
-        return it, sampleLogprobs, _logprobs
+            return it, sampleLogprobs, logprobs
+        

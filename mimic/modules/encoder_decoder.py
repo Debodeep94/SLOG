@@ -223,11 +223,7 @@ class PositionwiseFeedForward(nn.Module):
 class Embeddings(nn.Module):
     def __init__(self, d_model, vocab, pretrained_weights=None):
         super(Embeddings, self).__init__()
-        if pretrained_weights is not None:
-            pretrained_weights=torch.load('target_embedding_weights.pth')
-            self.lut = nn.Embedding.from_pretrained(pretrained_weights, freeze=False)
-        else:
-            self.lut = nn.Embedding(vocab, d_model)
+        self.lut = nn.Embedding(vocab, d_model)
         self.d_model = d_model
 
     def forward(self, x):
@@ -400,10 +396,6 @@ class EncoderDecoder(AttModel):
             att_feats, _, att_masks, _ = self._prepare_feature(att_feats, att_masks)
             out = self.model(att_feats)
         outputs = F.log_softmax(self.logit(out), dim=-1)
-        #print('out in forward step: ', out)
-        #print('shape of out in forward step: ', out.size())
-        #print('output in forward step: ', outputs)
-        #print('shape of output in forward step: ', outputs.size())
         return outputs
 
     def core(self, it, fc_feats_ph, att_feats_ph, memory, state, mask):

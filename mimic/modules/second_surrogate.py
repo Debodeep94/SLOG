@@ -34,7 +34,7 @@ def main():
     print('Currently usable device is: ', device)
     torch.cuda.empty_cache()
     print(torch.cuda.memory_summary())
-    base_path='./R2Gen/surrogate/'
+    base_path='n/surrogate/'
     path=base_path#+'surrogate1/'
     text_embeddings = torch.load(path+'sur2_data_gt_emb_full.pt', map_location=torch.device('cpu'))  # shape: [num_samples, image_embedding_dim]
     image_vectors = torch.load(path+'sur2_img_data.pt', map_location=torch.device('cpu'))  # shape: [num_samples, seq_len, embedding_dim]

@@ -126,205 +126,22 @@ def surrogate_split(train_x, train_y, weights):
     weight_train= weights[:int(len(weights)*0.8)]
 
     return train_x, train_y, val_x, val_y, weight_train
-
-def surrogate_regression(train_x, train_y, test_x, test_y, weights, id):
-    test_list=[]
-    for i in test_x: #initially it was test_x
-        #i=i.cpu()
-        new_list=i.tolist()
-        test_list.append(new_list)
-    test_list=np.array(test_list)
-
-    train_list=[]
-    for j in train_x:
-        #i=i.cpu()
-        new_list=j.tolist()
-        train_list.append(new_list)
-    train_list=np.array(train_list)
-
-    print(len(train_list))
-    #minmaxscaler
-    scaler_train = MinMaxScaler()
-    scaler_test = MinMaxScaler()
-    # transform data
-    train_x = scaler_train.fit_transform(train_list.reshape(len(train_list),512))
-
-    test_x = scaler_test.fit_transform(test_list.reshape(len(test_list),512))
-    
-    train_x, train_y, val_x, val_y, weight_train = surrogate_split(train_x, train_y, weights)
-    # Assume you have independent variables X and a dependent variable y
-    train_x_pt = torch.tensor(train_x,dtype=torch.float) #pt: pytorch
-    train_y_pt = torch.tensor(train_y, dtype=torch.float).reshape(-1,1) #pt:pytorch
-
-    val_x_pt = torch.tensor(val_x,dtype=torch.float) #pt: pytorch
-    val_y_pt = torch.tensor(val_y, dtype=torch.float).reshape(-1,1) #pt:pytorch
-
-    test_x_pt = torch.tensor(test_x,dtype=torch.float)
-    test_y_pt = torch.tensor(test_y, dtype=torch.float).reshape(-1,1)
-
-    # Instantiate the model
-    input_dim = train_x_pt.size(1)
-    output_dim = train_y_pt.size(1)
-    model_surr = SurrogateModel(input_dim, 3)
-    # Define the loss function and optimizer
-    criterion1 = torch.nn.MSELoss()
-    criterion2 = SurrogateLoss()
-    optimizer = torch.optim.Adam(model_surr.parameters(), lr=0.01)
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=10, verbose=True)
-    early_stopping = EarlyStopping(patience=50, delta=0)
-
-    # Train the model
-    num_epochs = 300
-    train_loss = []
-    validation_loss = []
-    for epoch in range(num_epochs):
-      y_hat = model_surr(train_x_pt)
-      #print('yhat: ', y_hat)
-      loss = criterion2(torch.tensor(weight_train), y_hat, train_y_pt)
-      loss.backward()
-      train_loss.append(loss.item())
-
-      optimizer.step()
-      optimizer.zero_grad()
-
-      y_hat_val = model_surr(val_x_pt)
-      val_loss = criterion1(y_hat_val, val_y_pt)
-      validation_loss.append(val_loss.item())
-
-      if ((epoch+1)%10)==0:
-          print('Epoch [{}/{}], Train Loss: {:.4f}, Val Loss: {:.4f}'.format(epoch+1, num_epochs, loss.item(), val_loss.item()))
-
-      scheduler.step(val_loss)
-      early_stopping(val_loss)
-
-      if early_stopping.early_stop:
-        print("Early stopping")
-        break
-    # Test the model
-    with torch.no_grad():
-        predicted = model_surr(test_x_pt)
-        #print('Predicted values: ', predicted)
-
-    #y_preds=np.asarray(scaler_test.inverse_transform(predicted))
-    #gt=torch.tensor(scaler_test.inverse_transform(test_y_pt))
-    #print(test_y)
-    print('predicted', predicted)
-    mse= criterion1(torch.tensor(predicted), test_y_pt)
-    rel_rse_classical=torch.sum((torch.tensor(predicted)- test_y_pt)**2)/torch.sum((test_y_pt-torch.mean(test_y_pt))**2)
-    rmse_classical=mse**0.5
-    print('the rmse loss is ', rmse_classical)
-    print('Saving surrogate model...')
-    torch.save(model_surr, 'surrogate/split10k/'+'surr_lin_reg_new_split_'+str(id)+'.pt')
-    print('variance of test list: ', torch.std(test_y_pt))
-    print('variance of pred list: ', np.std(np.array(predicted)))
-    print('relative RSE: ', rel_rse_classical)
-
-    # Plot the curves
-    fig_surr=plt.figure()
-    plt.plot(train_loss, color= 'blue', label= 'train loss' )
-    plt.plot(validation_loss, color= 'green', label= 'validation loss' )
-    plt.legend()
-    plt.title('Surrogate train on splitted training data')
-    plt.savefig('plots/split10k/weight_lin_reg_new_split_B4_'+str(id)+'.png')
-    plt.close(fig_surr)
-
-    ############ Ridge regression ############
-
-    # Define the hyperparameters
-    input_size = train_x_pt.shape[1]
-    alpha = 0.1
-    epochs = 300
-    lr = 0.02
-    ridge_loss=[]
-    ridge_val_loss = []
-    # Initialize the Ridge Regression model
-    model_ridge = RidgeRegression(input_size, alpha)
-
-    # Define the loss function
-    loss_fn = CustomRidgeLoss(alpha)
-
-    # Define the optimizer
-    optimizer = torch.optim.Adam(model_ridge.parameters(), lr=lr)
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=10, verbose=True)
-    early_stopping = EarlyStopping(patience=100, delta=0)
-    best_loss = float('inf')
-    counter = 0  # Counter to track the number of epochs without improvement
-    early_stopping = EarlyStopping(patience=100, delta=0)
-    #scheduler = StepLR(optimizer, step_size=100, gamma=0.8)  # Reduce the learning rate by a factor of 0.5 every 20 epochs
-
-    # Training loop
-    for epoch in range(epochs):
-        # Forward pass
-        outputs = model_ridge(train_x_pt)
-        loss = loss_fn(model_ridge, torch.tensor(weight_train),outputs.squeeze(), train_y_pt)  # Remove extra dimensions
-        ridge_loss.append(loss.item())
-
-        # Backward and optimize
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        #scheduler.step()
-        with torch.no_grad():
-            val_out=model_ridge(val_x_pt)
-            val_loss=(criterion1(val_out.squeeze(), val_y_pt.reshape(-1)))
-            ridge_val_loss.append(val_loss)
-        if (epoch + 1) % 10 == 0:
-            print(f'Epoch [{epoch+1}/{epochs}], Loss: {loss.item():.4f}, val_loss: {val_loss.item():.4f}')
-        scheduler.step(val_loss)
-        early_stopping(val_loss)
-
-        if early_stopping.early_stop:
-            print("Early stopping")
-            break
-    # Retrieve the learned coefficients
-    coefficients = model_ridge.linear.weight.detach().numpy()
-    intercept = model_ridge.linear.bias.detach().numpy()
-    # Evaluate the model on the test set
-    with torch.no_grad():
-        test_outputs = model_ridge(test_x_pt)
-    test_loss_ridge = (criterion1(test_outputs.squeeze(), test_y_pt.reshape(-1)))**0.5
-    print('ridge outputs: ', test_outputs)
-    print('test_loss: ', test_loss_ridge)
-    rel_rse_ridge=torch.sum((torch.tensor(test_outputs)- test_y_pt)**2)/torch.sum((test_y_pt-torch.mean(test_y_pt))**2)
-    print("rel_rse_ridge: ", rel_rse_ridge)
-    torch.save(model_ridge, 'surrogate/split10k/'+'surr_ridge_reg_new_split_'+str(id)+'.pt')
-
-    fig_ridge=plt.figure()
-    plt.plot( ridge_loss, label='train')
-    plt.plot( ridge_val_loss, label='test')
-    plt.legend()
-    plt.savefig('plots/split10k/weight_ridge_reg_new_split_B4_'+str(id)+'.png')
-    plt.close(fig_ridge)
-    return rmse_classical,rel_rse_classical, test_loss_ridge, rel_rse_ridge
-
-def torch_minmax(input_tensor, device):
-    loaded_data = torch.load('/home/debodeep.banerjee/R2Gen/train_min_max_scalar.pt')
-
-    # Retrieve the min and max tensors
-    min_tensor = loaded_data['min']
-    max_tensor = loaded_data['max']
-
-    min_tensor = min_tensor.to(device)
-    max_tensor = max_tensor.to(device)
-
-    # Use the retrieved tensors as needed
-    #print(min_tensor.item(), max_tensor.item())
-
-    # Apply min-max scaling to each sublist
-    scaled_tensor = input_tensor.sub(min_tensor).div(max_tensor - min_tensor)
-
-
-    # Apply the scaling function element-wise using torch.clamp to ensure values remain within the desired range
-    scaled_tensor = torch.clamp(scaled_tensor, min=0, max=1)
-
-    # Ensure the scaled tensor retains the gradient information for backpropagation
-    scaled_tensor = scaled_tensor.clone().requires_grad_(True)
-    return scaled_tensor
     
 def convert(val):
-    if val==0:
-        return -1
+    if val==-1:
+        return  2# This is just for matching the chexpert with ground truth
     elif val == 1:
         return val
     else:
         return 0
+    
+def count (tensor_data):
+    counts=torch.nn.functional.one_hot (tensor_data.long()).sum (dim = 0)#.sum(dim=0)
+    counts=counts.sum(dim=0)
+    return counts
+def count_weights(tensor_data,val):
+    counts=count( tensor_data)
+    #print(counts)
+    weights=counts[val]/counts
+    weights = torch.clamp(weights, max=15)
+    return weights#/300

@@ -49,7 +49,7 @@ def parse_agrs():
 
     # Sample related
     parser.add_argument('--sample_method', type=str, default='beam_search', help='the sample methods to sample a report.')
-    parser.add_argument('--beam_size', type=int, default=3, help='the beam size when beam searching.')
+    parser.add_argument('--beam_size', type=int, default=4, help='the beam size when beam searching.')
     parser.add_argument('--temperature', type=float, default=1.0, help='the temperature when sampling.')
     parser.add_argument('--sample_n', type=int, default=1, help='the sample number per image.')
     parser.add_argument('--group_size', type=int, default=1, help='the group size.')
@@ -65,7 +65,7 @@ def parse_agrs():
     parser.add_argument('--save_period', type=int, default=1, help='the saving period.')
     parser.add_argument('--monitor_mode', type=str, default='max', choices=['min', 'max'], help='whether to max or min the metric.')
     parser.add_argument('--monitor_metric', type=str, default='BLEU_4', help='the metric to be monitored.')
-    parser.add_argument('--early_stop', type=int, default=35, help='the patience of training.')
+    parser.add_argument('--early_stop', type=int, default=20, help='the patience of training.')
 
     # Optimization
     parser.add_argument('--optim', type=str, default='Adam', help='the type of the optimizer.')

@@ -11,17 +11,18 @@ from modules.loss import compute_loss
 from models.r2gen import R2GenModel
 #from custom_tester import Tester
 #from modules.finetuner import FineTuner
-
+import torch.distributed as dist
+import os
 from modules.optimizers import build_optimizer, build_lr_scheduler
-
 
 def parse_agrs():
     parser = argparse.ArgumentParser()
 
+    
     # Data input settings
-    parser.add_argument('--image_dir', type=str, default='/nfs/data_chaos/dbanerjee/my_data/R2Gen/data/iu_xray/images/', help='the path to the directory containing the data.')
-    parser.add_argument('--ann_path', type=str, default='/nfs/data_chaos/dbanerjee/my_data/R2Gen/data/iu_xray/annotation.json', help='the path to the directory containing the data.')
-    parser.add_argument('--info_score_data', type=str, default="/home/debodeep.banerjee/R2Gen/data/mimic/chexpert_converted.csv", help='the path to the file containing the human feedbacks.')
+    parser.add_argument('--image_dir', type=str, default='/my_data/R2Gen/data/mimic/images/', help='the path to the directory containing the data.')
+    parser.add_argument('--ann_path', type=str, default='/my_data/R2Gen/data/mimic/annotation.json', help='the path to the directory containing the data.')
+    parser.add_argument('--info_score_data', type=str, default="/R2Gen/data/mimic/chexpert_converted.csv", help='the path to the file containing the human feedbacks.')
     # Data loader settings
     parser.add_argument('--dataset_name', type=str, default='iu_xray', choices=['iu_xray', 'mimic_cxr'], help='the dataset to be used.')
     parser.add_argument('--max_seq_length', type=int, default=60, help='the maximum sequence length of the reports.')
@@ -62,6 +63,7 @@ def parse_agrs():
     parser.add_argument('--block_trigrams', type=int, default=1, help='whether to use block trigrams.')
 
     # Trainer settings
+    parser.add_argument('--local_rank', type=int, default=0, help='local rank in DDP.')
     parser.add_argument('--n_gpu', type=int, default=1, help='the number of gpus to be used.')
     parser.add_argument('--epochs', type=int, default=100, help='the number of training epochs.')
     parser.add_argument('--save_dir', type=str, default='results/iu_xray', help='the patch to save the models.')
@@ -96,7 +98,6 @@ def parse_agrs():
 def main():
     # parse arguments
     args = parse_agrs()
-
     # fix random seeds
     torch.manual_seed(args.seed)
     torch.backends.cudnn.deterministic = True
@@ -107,7 +108,7 @@ def main():
     tokenizer = Tokenizer(args)
 
     # create data loader
-    test_dataloader = R2DataLoader(args, tokenizer, split='finetune', shuffle=False) #ideally it should be 'test'
+    #test_dataloader = R2DataLoader(args, tokenizer, split='finetune', shuffle=False) #ideally it should be 'test'
     train_dataloader = R2DataLoader(args, tokenizer, split='train', shuffle=False) 
     #surrogate_dataloader = R2DataLoader(args, tokenizer, split='chexpert', shuffle=False) 
 
@@ -117,13 +118,10 @@ def main():
     # get function handles of loss and metrics
     criterion = compute_loss
     metrics = compute_scores
-
-    # build optimizer, learning rate scheduler
-   # optimizer = build_optimizer(args, model_train)
     #lr_scheduler = build_lr_scheduler(args, optimizer)
 
     # build trainer and start to train
-    tester = Tester(model, criterion, metrics, args, test_dataloader, train_dataloader)
+    tester = Tester(model, criterion, metrics, args, train_dataloader)
     tester.test()
     #print(tester)
 

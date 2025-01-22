@@ -14,32 +14,26 @@ import json
 import cv2
 import torch
 import numpy as np
-from modules.utils import generate_heatmap
-from surrogate import SurrogateModel, SurrogateLoss, CustomRidgeLoss, RidgeRegression
 from pycocoevalcap.bleu.bleu import Bleu
 from tqdm import tqdm
 from sklearn.preprocessing import MinMaxScaler
 import itertools
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
-from torch.profiler import profile, record_function, ProfilerActivity
-from modules.utils import cycle
 from torch.autograd import Variable
 import numpy as np
 from pycocoevalcap.bleu.bleu import Bleu
 from tqdm import tqdm
-from sklearn.preprocessing import MinMaxScaler
-import itertools
 import random
-import matplotlib.pyplot as plt
-from sklearn.svm import SVR
 from sklearn.pipeline import make_pipeline
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from modules.utils import EarlyStopping#, torch_minmax
 from torch.utils.data import DataLoader, ConcatDataset
 import torch.nn.functional as F
 #import wandb
-from modules.rnn_surrogate import *
+from surrogate_module.surrogate_utils import *
+from surrogate_module.rnn_surrogate import *
+from CheXbert.src.label import *
+import csv
+from .ce_metrics import *
 
 print('GPU availability: ', torch.cuda.is_available())
 class BaseTrainer(object):
@@ -54,8 +48,7 @@ class BaseTrainer(object):
         #torch.cuda.set_device('cuda:{}'.format(device_ids[0]))
         self.model = model.to(self.device)
         if len(device_ids) > 1:
-            self.model = torch.nn.DataParallel(model, device_ids=device_ids, output_device=device_ids[0])
-            self.model.to(self.device)
+            self.model = torch.nn.DataParallel(model, device_ids=device_ids)
 
         self.criterion = criterion
         self.metric_ftns = metric_ftns
@@ -78,8 +71,6 @@ class BaseTrainer(object):
         self.checkpoint_dir = args.save_dir
         self.ce_weight= args.llm_weight
         self.surr_weight = args.surr_weight
-        self.min_max_scaler = args.min_max_scaler        
-
         if not os.path.exists(self.checkpoint_dir):
             os.makedirs(self.checkpoint_dir)
 
@@ -93,6 +84,15 @@ class BaseTrainer(object):
         #self.writer = SummaryWriter(log_dir='logs')
 
         self.surrogate_model = args.surrogate_model
+        self. surrogate_checkpoint = torch.load(self.surrogate_model)   
+        self.surrogate = VisualSurrogate(2048,512,4, 256, 6, 14, 2, mode='CELoss')
+        self.surrogate = self.surrogate.to(self.device)
+        self.surrogate.load_state_dict(self.surrogate_checkpoint)
+        for params in self.surrogate.parameters():
+            params.requires_grad = False
+        self.embed_weight = self.model.encoder_decoder.model.tgt_embed[0].lut.weight
+        self.onehot_embedding = nn.Linear(self.embed_weight.shape[0], self.embed_weight.shape[1], bias=False).to(self.device)
+        self.onehot_embedding.weight = torch.nn.Parameter(self.embed_weight.transpose(0,1))
     #print('DID YOU PUT A CORRECT LAMBDA VALUE TO THE WANDB CONFIG?????')
     
     '''wandb.init(
@@ -166,13 +166,13 @@ class BaseTrainer(object):
         fig_box = plt.figure()
         #plt.boxplot(val_info_scores)
         #plt.title('Box plot of information scores of validation data over epochs')
-        #plt.savefig('/home/debodeep.banerjee/R2Gen/plots/only_find/'+str(self.ce_weight).replace('.', '_')+'_SR'+str(self.surr_weight).replace('.', '_')+'.png')
+        #plt.savefig('n/plots/only_find/'+str(self.ce_weight).replace('.', '_')+'_SR'+str(self.surr_weight).replace('.', '_')+'.png')
         #plt.close(fig_box)
         # plot train list
         fig=plt.figure()
         plt.plot(loss)
         plt.title('Train+Finetune')
-        #plt.savefig('/home/debodeep.banerjee/R2Gen/only_find/'+str(self.ce_weight).replace('.', '_')+'_SR'+str(self.surr_weight).replace('.', '_')+'.png')
+        #plt.savefig('n/only_find/'+str(self.ce_weight).replace('.', '_')+'_SR'+str(self.surr_weight).replace('.', '_')+'.png')
         plt.close(fig)
 
         return log
@@ -224,8 +224,8 @@ class BaseTrainer(object):
             'optimizer': self.optimizer.state_dict(),
             'monitor_best': self.mnt_best
         }
-        filename = os.path.join(self.checkpoint_dir, 'finetuned_checkpoint_CE_surr_swap_'+str(self.ce_weight).replace('.', '_')+'_SR'+str(self.surr_weight).replace('.', '_')+'.pth') # startid=0; num_ele=20
-        torch.save(state, filename)
+        filename = os.path.join(self.checkpoint_dir, 'finetuned_checkpoint_CE_surr_swap_'+str(self.ce_weight).replace('.', '_')+'_SR'+str(self.surr_weight).replace('.', '_')+str(epoch)+'.pth') # startid=0; num_ele=20
+        #torch.save(state, filename)
         print("Saving checkpoint: {} ...".format(filename))
         if save_best:
             best_path = os.path.join(self.checkpoint_dir, 'finetuned_best_CE_surr_swap_'+str(self.ce_weight).replace('.', '_')+'_sr'+str(self.surr_weight).replace('.', '_')+'.pth')
@@ -243,14 +243,23 @@ class BaseTrainer(object):
         self.optimizer.load_state_dict(checkpoint['optimizer'])
 
     def _load_checkpoint(self, load_path):
+        #self.device, device_ids = self._prepare_device(args.n_gpu)
         load_path = str(load_path)
         self.logger.info("Loading checkpoint: {} ...".format(load_path))
         checkpoint = torch.load(load_path)
         #surrogate_checkpoint= torch.load('/nfs/data_chaos/dbanerjee/my_data/R2Gen/surrogate/surr_model_sample_size_2500.pt')
-        self.model.load_state_dict(checkpoint['state_dict'])
+        state_dict = checkpoint['state_dict']
+        # print('state_dict:',state_dict)
+        new_state_dict = {'module.' + k: v for k, v in state_dict.items() if not k.startswith('module.')}
+        # print('new_state_dict:',new_state_dict)
+        # Load into the single-GPU model
+        # if len(device_ids)>1:
+        self.model.load_state_dict(state_dict)
+        # else:
+        #     self.model.load_state_dict(checkpoint['state_dict'])
         print("Checkpoint loaded. Initiating finetuning from epoch {}".format(self.start_epoch))
         self.optimizer.load_state_dict(checkpoint['optimizer'])
-
+        
     def _record_best(self, log):
         improved_val = (self.mnt_mode == 'min' and log[self.mnt_metric] <= self.best_recorder['val'][
             self.mnt_metric]) or \
@@ -276,13 +285,12 @@ class BaseTrainer(object):
 
 
 class FineTuner(BaseTrainer):
-    def __init__(self, model, criterion, metric_ftns, optimizer, args, lr_scheduler, train_dataloader, val_dataloader,
-                 test_dataloader):
+    def __init__(self, model, criterion, metric_ftns, optimizer, args, lr_scheduler, train_dataloader, val_dataloader):
         super(FineTuner, self).__init__(model, criterion, metric_ftns, optimizer, args)
         self.lr_scheduler = lr_scheduler
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
-        self.test_dataloader = test_dataloader
+        #self.test_dataloader = test_dataloader
         
     def _train_epoch(self, epoch):
         log_dir = "logs/"   # Replace with the directory where you want to save the logs
@@ -296,22 +304,21 @@ class FineTuner(BaseTrainer):
         # Converting all the parameters to float16
         
         self.model.train()
-        total_length = len(self.test_dataloader)
+        total_length = len(self.train_dataloader)
 
         print('total_length: ', total_length)
         print('------------------------------------------------------------------------------------------------')
         print('surrogate weight', self.surr_weight)
         print('LLM weight', self.ce_weight)
         print('------------------------------------------------------------------------------------------------')
-        for batch_idx_llm, ((images_id, images, reports_ids, reports_masks, seq_length), 
-                           (images_id_surr_ft, images_surr_ft, reports_ids_surr_ft, reports_masks_surr_ft, seq_length_ft)) in tqdm(enumerate(zip(self.train_dataloader, cycle(self.test_dataloader)))): #because ft is less than train here
+        for batch_idx, (images_id, images, reports_ids, reports_masks, seq_length) in tqdm(enumerate(self.train_dataloader)):
             
             images, reports_ids, reports_masks = images.to(self.device), reports_ids.to(self.device), reports_masks.to(self.device)
             
-            images_ft, reports_ids_ft, reports_masks_ft = images_surr_ft.to(self.device), reports_ids_surr_ft.to(self.device), reports_masks_surr_ft.to(self.device)
-            
+            #images_ft, reports_ids_ft, reports_masks_ft = images_surr_ft.to(self.device), reports_ids_surr_ft.to(self.device), reports_masks_surr_ft.to(self.device)
+            print('------------------------------------------------------------------------------------------------')
             print('Entering Training Loop')
-            print('Running training mode')
+            print('model dev:', next(self.model.parameters()).device)
             
             output = self.model(images, reports_ids, mode='train')
 
@@ -321,50 +328,31 @@ class FineTuner(BaseTrainer):
             loss_llm+=loss_lang.item()#.append(loss_lang.item())
             print('cumulative loss: ', loss_llm)
             
-            print('Running sample mode')
+            #print('Running sample mode')
             
             #latent, output_surr = self.model(images,reports_ids, mode='sample')
-            latent, seq, gs_logps_tr = self.model(images, mode='sample')
-            lat_vec_ft, seq_ft, gs_logps_ft = self.model(images_ft, mode='sample')
-            embeddings= self.model.encoder_decoder.model.tgt_embed
-
-            # we don't need this if we  are not using the embeddings
-            embedded_sentence_tr = embeddings(seq)
-            embedded_sentence_ft = embeddings(seq_ft)
-
+            _, _,gs_logps = self.model(images, mode='finetune')
+            embedded_sentence_tr = self.onehot_embedding(gs_logps) #commenting for the time being
+            #embedded_sentence_ft = embeddings(seq_ft)
+            print(embedded_sentence_tr.size())
             # sequence lengths
-            sequence_lengths_tr = torch.tensor([len(k) for k in seq]).to(torch.int64)
-            sequence_lengths_ft = torch.tensor([len(k_ft) for k_ft in seq_ft]).to(torch.int64)
+            #sequence_lengths_ft = torch.tensor([len(k_ft) for k_ft in seq_ft]).to(torch.int64)
             
             print(self.surrogate_model)
-            
-            surrogate_checkpoint = torch.load(self.surrogate_model)   
-            surrogate = LSTM_Attn(embedded_sentence_tr.size(-1),512, 2)#,num_layers, output_size,3,dropout_rate=0.2)
-            surrogate = surrogate.to(self.device)
-            surrogate.load_state_dict(surrogate_checkpoint)
-            
-            for params in surrogate.parameters():
-                params.requires_grad = False
-            
-            predicted_ft = surrogate(embedded_sentence_ft,sequence_lengths_ft)
-            predicted_ft = predicted_ft[:,:,1]
-            #print('predicted ft: ', predicted_ft)
-            predicted_tr = surrogate(embedded_sentence_tr,sequence_lengths_tr)
-            predicted_ft = predicted_tr[:,:,1]
+            predicted_tr = self.surrogate(images, embedded_sentence_tr)
+            predicted_tr = predicted_tr[:,:,1]
             surr_tr_score = torch.mean(predicted_tr)
-            surr_ft_score = torch.mean(predicted_ft)
-            #surr_tr_score = surr_tr_score.clone().requires_grad_(True)
-            print('surr train score: ', surr_tr_score)
-            print('surr fine-tune score: ', surr_ft_score)
-            print('ce loss: ', loss_lang)
-            surrogate_loss = surr_ft_score+surr_tr_score
-            tot_surr_loss+=surrogate_loss.item()
-            print('surrogate loss: ', surrogate_loss)
+            print('predicted tr shape: ', predicted_tr.size())
             
-            surrogate_loss = self.surr_weight*surrogate_loss
+            print('surr train score: ', surr_tr_score)
+            print('ce loss: ', loss_lang)
+            tot_surr_loss+=surr_tr_score.item()
+            print('surrogate loss: ', surr_tr_score)
+            
+            surrogate_loss = self.surr_weight*surr_tr_score
             ce_loss = self.ce_weight*loss_lang
             hdm_loss =  ce_loss-surrogate_loss
-            #hdm_loss =  hdm_loss.clone().requires_grad_(True)
+            
             hybrid+=hdm_loss.item()
             #hdm_loss = -surrogate_loss
             print('hdm_loss: ', hdm_loss)
@@ -374,6 +362,7 @@ class FineTuner(BaseTrainer):
             torch.nn.utils.clip_grad_value_(self.model.parameters(), 0.1)
             self.optimizer.step()
             print('all done')
+            print('------------------------------------------------------------------------------------------------')
             count+=1
             #if count==100:
                 #break  
@@ -390,6 +379,7 @@ class FineTuner(BaseTrainer):
         print('log: ', log)
         
         # Create a new iterator that starts from the specified index and returns the specified number of elements
+        # Create a new iterator that starts from the specified index and returns the specified number of elements
         self.model.eval()
         print('entering validation ...')
         #self.model.eval()
@@ -399,17 +389,17 @@ class FineTuner(BaseTrainer):
             for batch_idx_val, (images_id, images, reports_ids, reports_masks, seq_length) in enumerate(self.val_dataloader):
                 images, reports_ids, reports_masks = images.to(self.device), reports_ids.to(
                     self.device), reports_masks.to(self.device)
-                latent_val, seq_val, gs_logps_val = self.model(images, mode='gumbel')
+                _,seq_val, _ = self.model(images, mode='sample')
                 sequence_lengths_val = torch.tensor([len(k) for k in seq_val]).to(torch.int64)
                 embeddings= self.model.encoder_decoder.model.tgt_embed
 
                 # we don't need this if we  are not using the embeddings
                 embedded_sentence_val = embeddings(seq_val)
-                surrogate_checkpoint = torch.load(self.surrogate_model)   
-                surrogate = LSTM_Attn(embedded_sentence_val.size(-1), 512, 2)#,num_layers, output_size,3,dropout_rate=0.2)
-                surrogate = surrogate.to(self.device)
-                surrogate.load_state_dict(surrogate_checkpoint)
-                predicted_val = surrogate(embedded_sentence_val,sequence_lengths_val)
+                # surrogate_checkpoint = torch.load(self.surrogate_model)   
+                # surrogate = VisualSurrogate(2048,512,8, 512, 8, 14, 2, mode='CELoss')
+                # surrogate = surrogate.to(self.device)
+                # surrogate.load_state_dict(surrogate_checkpoint)
+                predicted_val = self.surrogate(images, embedded_sentence_val)
                 predicted_val = predicted_val[:,:,1]
                 val_inf_pred.extend(predicted_val)
 
@@ -422,7 +412,7 @@ class FineTuner(BaseTrainer):
             print('pred text', val_res)
             
             print('grund truth text', val_gts)
-            val_met, val_met_ind = self.metric_ftns({i: [gt] for i, gt in enumerate(val_gts)},
+            val_met, _ = self.metric_ftns({i: [gt] for i, gt in enumerate(val_gts)},
                                     {i: [re] for i, re in enumerate(val_res)})
             #print(val_met)                       
             log.update(**{'val_' + k: v for k, v in val_met.items()})
@@ -430,5 +420,37 @@ class FineTuner(BaseTrainer):
         print('len val info sc:', len(predicted_val))
         mean_inf_sc = torch.mean(concatenated_tensor)
         #wandb.log({'validation info score':mean_inf_sc})
-        log.update(**{'val info score: ': mean_inf_sc.item()})
+        log.update(**{'SURROGATE_SCORE: ': mean_inf_sc.item()})
+        csv_file_path1 = "n/csv_outputs/imp_n_find/preds_val"+str(self.surr_weight)+".csv"
+        csv_file_path2 = "n/csv_outputs/imp_n_find/gts_val"+str(self.surr_weight)+".csv"
+        # Open the CSV file in write mode for the preds
+        column_name = "Report Impression"
+        with open(csv_file_path1, mode='w', newline='') as csv_file:
+            csv_writer = csv.writer(csv_file)
+            csv_writer.writerow([column_name])
+            # Write each string in the list as a row in the CSV file
+            for string in val_res:
+                csv_writer.writerow([string])
+        
+        with open(csv_file_path2, mode='w', newline='') as csv_file:
+            csv_writer = csv.writer(csv_file)
+            csv_writer.writerow([column_name])
+            # Write each string in the list as a row in the CSV file
+            for string in val_gts:
+                csv_writer.writerow([string])
+
+
+        chexbert_path='n/results/mimic_cxr/imp_n_find/chexbert.pth'
+        output_path1="n/csv_outputs/ft_storage/chex_val_pred"+str(self.surr_weight)+".csv"
+        output_path2="n/csv_outputs/ft_storage/chex_val_gts"+str(self.surr_weight)+".csv"
+        preds=chexbert_annotator(csv_file_path1,output_path1,chexbert_path)
+        gts=chexbert_annotator(csv_file_path2,output_path2,chexbert_path)
+        print(preds)
+        prec_dict, recall_dict, f1_dict=ce_metrics(output_path1,output_path2, 1)
+        print(prec_dict)
+        print(recall_dict)
+        print(f1_dict)
+        pos_f1=f1_dict['F1_MICRO']
+        log.update(**{'val_' +'POSITIVE_F1': pos_f1})
+        # self.lr_scheduler.step()
         return log, hdm_loss, val_inf_pred #this should be replaced by hdm_loss

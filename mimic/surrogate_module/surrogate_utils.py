@@ -13,20 +13,28 @@ import torch.nn.functional as F
 from sklearn.metrics import precision_recall_fscore_support
 import time
 import random
-
-
+from torchvision import transforms
+import torch.nn as nn
+import torchvision.models as models
+import torch.nn.functional as F
+from PIL import Image
+from tqdm import tqdm
 
 def count (tensor_data):
+    print(torch.nn.functional.one_hot (tensor_data.long()))
     counts=torch.nn.functional.one_hot (tensor_data.long()).sum (dim = 0)#.sum(dim=0)
     counts=counts.sum(dim=0)
     return counts
 
-def count_weights(tensor_data,val):
-    counts=count ( tensor_data)
-    #print(counts)
-    weights=counts[val]/counts
-    weights = torch.clamp(weights, max=15)
-    return weights#/300
+def count_weights(tensor_data, val):
+    # Get counts for each label
+    counts = count(tensor_data)
+    # Compute weights as the ratio for the specified label index
+    weights = counts[val] / counts
+    # Clamp weights to a maximum of 8
+    weights = torch.clamp(weights, max=8)
+    return weights
+
 
 def first_surr_split(tensor_X, sequence_X, weight_X, y_vals, train_ratio=0.9):
     """
@@ -212,6 +220,12 @@ def convert(val):
     else:
         return 0
 
+def convert_array(array_data):
+    # Use numpy's where function for element-wise transformations
+    array_data = np.where(array_data == -1, 2, array_data)  # Convert -1 to 2
+    array_data = np.where(array_data == 1, 1, 0)            # Convert other values to 0, keep 1 as is
+    return array_data
+
 def draw_samples(data, num_samples):
         start_time = time.time()
         classes = data.columns[1:]
@@ -275,3 +289,68 @@ def draw_samples(data, num_samples):
         end_time = time.time()
         print(f'total time taken for sampling process: {end_time-start_time} seconds')
         return sample
+def processed_image(file_path):
+    image = Image.open(file_path).convert('RGB')
+    transform = transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+    ])
+    image = transform(image)
+    return image
+
+# Define dataset class
+class ImageDataset(torch.utils.data.Dataset):
+    def __init__(self, file_paths):
+        self.file_paths = file_paths
+
+    def __len__(self):
+        return len(self.file_paths)
+
+    def __getitem__(self, idx):
+        file_path = self.file_paths[idx]
+        image_tensor = processed_image(file_path)
+        return image_tensor
+
+# Define function to extract features from a batch of images
+def image_feat_extractor(images):
+    model = models.resnet50(pretrained=True)
+    modules = list(model.children())[:-2]
+    model = torch.nn.Sequential(*modules)
+    patch_feats = model(images)
+    batch_size, feat_size, _, _ = patch_feats.shape
+    patch_feats = patch_feats.reshape(batch_size, feat_size, -1).permute(0, 2, 1)
+    return patch_feats
+
+# Define function to process images in batches
+def process_images_in_batches(file_paths, batch_size):
+    dataset = ImageDataset(file_paths)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+    all_features = []
+    for batch_images in tqdm(dataloader):
+        batch_features = image_feat_extractor(batch_images)
+        all_features.append(batch_features)
+    return torch.cat(all_features, dim=0)
+
+
+def compute_mlc_f1(gt, pred, label_set):
+    print('gt: ', gt)
+    print('pred: ', pred)
+    res_mlc = {}
+    score = 0
+    for i, label in enumerate(label_set):
+        res_mlc['F1_' + label] = round(f1_score(gt[:, i], pred[:, i], zero_division=0)*100,2)
+        score += res_mlc['F1_' + label]
+        #print(f'{i}:{}')
+    res_mlc['AVG_F1'] = score / len(label_set)
+
+    res_mlc['F1_MACRO'] = round(f1_score(gt, pred, average="macro", zero_division=0)*100,2)
+    res_mlc['F1_MICRO'] = round(f1_score(gt, pred, average="micro", zero_division=0)*100,2)
+    res_mlc['RECALL_MACRO'] = recall_score(gt, pred, average="macro", zero_division=0)
+    res_mlc['RECALL_MICRO'] = recall_score(gt, pred, average="micro", zero_division=0)
+    res_mlc['PRECISION_MACRO'] = precision_score(gt, pred, average="macro", zero_division=0)
+    res_mlc['PRECISION_MICRO'] = precision_score(gt, pred, average="micro", zero_division=0)
+
+    return res_mlc

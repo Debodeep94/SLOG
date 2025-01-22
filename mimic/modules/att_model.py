@@ -9,8 +9,6 @@ from torch.nn.utils.rnn import PackedSequence, pack_padded_sequence, pad_packed_
 
 import modules.utils as utils
 from modules.caption_model import CaptionModel
-from modules.gumbel_softmax import gumbel_softmax, st_gumbel_softmax
-
 
 
 def sort_pack_padded_sequence(input, lengths):

@@ -28,7 +28,7 @@ class BaseDataset(Dataset):
 class IuxrayMultiImageDataset(BaseDataset):
     def __getitem__(self, idx):
         example = self.examples[idx]
-        image_id = example['study_id']
+        image_id = example['id']
         image_path = example['image_path']
         image_1 = Image.open(os.path.join(self.image_dir, image_path[0])).convert('RGB')
         image_2 = Image.open(os.path.join(self.image_dir, image_path[1])).convert('RGB')
@@ -46,7 +46,7 @@ class IuxrayMultiImageDataset(BaseDataset):
 class MimiccxrSingleImageDataset(BaseDataset):
     def __getitem__(self, idx):
         example = self.examples[idx]
-        image_id = example['study_id']
+        image_id = example['id']
         image_path = example['image_path']
         image = Image.open(os.path.join(self.image_dir, image_path[0])).convert('RGB')
         if self.transform is not None:

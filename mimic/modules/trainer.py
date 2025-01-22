@@ -64,7 +64,7 @@ class BaseTrainer(object):
                               #'test': {self.mnt_metric_test: self.mnt_best}}
     
         
-
+        self.max_seq_length=args.max_seq_length
     @abstractmethod
     def _train_epoch(self, epoch):
         raise NotImplementedError
@@ -116,7 +116,7 @@ class BaseTrainer(object):
             count_epoch+=1
         fig= plt.plot(range(count_epoch+1), loss)
         fig= plt.title('Train Loss')
-        plt.savefig('/home/debodeep.banerjee/R2GenCMN/plots/train_imp_n_find.png')
+        plt.savefig('n/plots/train_imp_n_find.png')
         return log
         self._print_best()
         self._print_best_to_file()
@@ -165,11 +165,11 @@ class BaseTrainer(object):
             'optimizer': self.optimizer.state_dict(),
             'monitor_best': self.mnt_best
         }
-        filename = os.path.join(self.checkpoint_dir, 'current_checkpoint_full_no_gumbel.pth')
+        filename = os.path.join(self.checkpoint_dir, 'current_checkpoint_full_no_gumbel_'+str(self.max_seq_length)+'.pth')
         torch.save(state, filename)
         print("Saving checkpoint: {} ...".format(filename))
         if save_best:
-            best_path = os.path.join(self.checkpoint_dir, 'best_model_full_no_gumbel.pth')
+            best_path = os.path.join(self.checkpoint_dir, 'best_model_full_no_gumbel_'+str(self.max_seq_length)+'.pth')
             torch.save(state, best_path)
             print("Saving current best: model_best.pth ...")
 
@@ -250,7 +250,6 @@ class Trainer(BaseTrainer):
                 latent,seq, gs_logps = self.model(images, mode='sample')
                 # Separate 'findings' and 'impression' based on [SEP] token
                 reports = self.model.tokenizer.decode_batch(seq.cpu().numpy())
-                #print(reports)
                 
                 #parts = reports[0].split(sep_index, 1)  # Split into two parts, assuming the first [SEP] separates 'findings' and 'impression'
                 #findings = parts[0].strip() if len(parts) > 0 else ''

@@ -7,18 +7,18 @@ from modules.dataloaders import R2DataLoader
 from modules.metrics import compute_scores
 from modules.optimizers import build_optimizer, build_lr_scheduler
 #from modules.trainer import Trainer
-from modules.loss import compute_loss
-from models.r2gen import R2GenModel
+from modules.loss import compute_loss, surrogate_loss
+from models.finetuner import R2GenModel
+#from modules.finetuner_train import FineTuner
 from modules.finetuner_train import FineTuner
-#from modules.finetuner_interactive import FineTuner
 
 
 def parse_agrs():
     parser = argparse.ArgumentParser()
 
     # Data input settings
-    parser.add_argument('--image_dir', type=str, default='data/iu_xray/images/', help='the path to the directory containing the data.')
-    parser.add_argument('--ann_path', type=str, default='data/iu_xray/annotation.json', help='the path to the directory containing the data.')
+    parser.add_argument('--image_dir', type=str, default='data/mimic/images/', help='the path to the directory containing the data.')
+    parser.add_argument('--ann_path', type=str, default='data/mimic/annotation.json', help='the path to the directory containing the data.')
 
     # Data loader settings
     parser.add_argument('--dataset_name', type=str, default='iu_xray', choices=['iu_xray', 'mimic_cxr'], help='the dataset to be used.')
@@ -66,7 +66,7 @@ def parse_agrs():
     parser.add_argument('--record_dir', type=str, default='records/', help='the patch to save the results of experiments')
     parser.add_argument('--save_period', type=int, default=1, help='the saving period.')
     parser.add_argument('--monitor_mode', type=str, default='max', choices=['min', 'max'], help='whether to max or min the metric.')
-    parser.add_argument('--monitor_metric', type=str, default='BLEU_4', help='the metric to be monitored.')
+    parser.add_argument('--monitor_metric', type=str, default='POSITIVE F1', help='the metric to be monitored.')
     parser.add_argument('--early_stop', type=int, default=10, help='the patience of training.')
 
     # Optimization
@@ -90,10 +90,9 @@ def parse_agrs():
     parser.add_argument('--surr_weight', type=float, default=1.0, help='Weight applied to surrogate information scores.')
     parser.add_argument('--llm_weight', type=float, default=1.0, help='Weight applied to CE loss.')
     parser.add_argument('--surrogate_model', type=str, default='surrogate/biggest_split_data/surr_model_ridge_biggest_split_bleu4_final.pt', help='Regression model')
-    parser.add_argument('--min_max_scaler', type=str, help='min max scalar path')
+    parser.add_argument('--surrogate_identity', type=int, default=2, help='Regression model')
     args = parser.parse_args()
     return args
-
 
 def main():
     # parse arguments
@@ -111,7 +110,7 @@ def main():
     # create data loader
     train_dataloader = R2DataLoader(args, tokenizer, split='train', shuffle=True)
     val_dataloader = R2DataLoader(args, tokenizer, split='val', shuffle=False)
-    test_dataloader = R2DataLoader(args, tokenizer, split='finetune', shuffle=False)
+    #ft_dataloader = R2DataLoader(args, tokenizer, split='finetune', shuffle=False)
     #surr_dataloader = R2DataLoader(args, tokenizer, split='chexpert', shuffle=False)
 
     # build model architecture
@@ -120,6 +119,7 @@ def main():
 
     # get function handles of loss and metrics
     criterion = compute_loss
+    surr_criterion = surrogate_loss
     metrics = compute_scores
 
     # build optimizer, learning rate scheduler
@@ -128,7 +128,7 @@ def main():
 
     # build trainer and start to train
     trainer = FineTuner(model_train, criterion, metrics, optimizer, args, lr_scheduler, 
-    train_dataloader, val_dataloader, test_dataloader)
+    train_dataloader, val_dataloader)
     trainer.train()
 
 

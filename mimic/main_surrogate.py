@@ -12,15 +12,14 @@ from models.r2gen import R2GenModel
 #from modules.finetuner import FineTuner
 from modules.surrogate_tester import SurrogateTester
 from modules.optimizers import build_optimizer, build_lr_scheduler
-from modules.diff_chex import SurrogateFamily
 
 def parse_agrs():
     parser = argparse.ArgumentParser()
 
     # Data input settings
-    parser.add_argument('--image_dir', type=str, default='/nfs/data_chaos/dbanerjee/my_data/R2Gen/data/iu_xray/images/', help='the path to the directory containing the data.')
-    parser.add_argument('--ann_path', type=str, default='/nfs/data_chaos/dbanerjee/my_data/R2Gen/data/iu_xray/annotation.json', help='the path to the directory containing the data.')
-    parser.add_argument('--info_score_data', type=str, default="/nfs/data_chaos/dbanerjee/my_data/R2Gen/data/mimic/chexpert_converted.csv", help='the path to the file containing the human feedbacks.')
+    parser.add_argument('--image_dir', type=str, default=/my_data/R2Gen/data/iu_xray/images/', help='the path to the directory containing the data.')
+    parser.add_argument('--ann_path', type=str, default='/my_data/R2Gen/data/iu_xray/annotation.json', help='the path to the directory containing the data.')
+    parser.add_argument('--info_score_data', type=str, default="/my_data/R2Gen/data/mimic/chexpert_converted.csv", help='the path to the file containing the human feedbacks.')
     # Data loader settings
     parser.add_argument('--dataset_name', type=str, default='iu_xray', choices=['iu_xray', 'mimic_cxr'], help='the dataset to be used.')
     parser.add_argument('--max_seq_length', type=int, default=60, help='the maximum sequence length of the reports.')
@@ -31,6 +30,10 @@ def parse_agrs():
     # Model settings (for visual extractor)
     parser.add_argument('--visual_extractor', type=str, default='resnet101', help='the visual extractor to be used.')
     parser.add_argument('--visual_extractor_pretrained', type=bool, default=True, help='whether to load the pretrained visual extractor')
+    # for Relational Memory
+    parser.add_argument('--rm_num_slots', type=int, default=3, help='the number of memory slots.')
+    parser.add_argument('--rm_num_heads', type=int, default=8, help='the numebr of heads in rm.')
+    parser.add_argument('--rm_d_model', type=int, default=512, help='the dimension of rm.')
 
     # Model settings (for Transformer)
     parser.add_argument('--d_model', type=int, default=512, help='the dimension of Transformer.')
@@ -45,11 +48,6 @@ def parse_agrs():
     parser.add_argument('--pad_idx', type=int, default=0, help='the index of <pad>.')
     parser.add_argument('--use_bn', type=int, default=0, help='whether to use batch normalization.')
     parser.add_argument('--drop_prob_lm', type=float, default=0.5, help='the dropout rate of the output layer.')
-    # for Relational Memory
-    parser.add_argument('--rm_num_slots', type=int, default=3, help='the number of memory slots.')
-    parser.add_argument('--rm_num_heads', type=int, default=8, help='the numebr of heads in rm.')
-    parser.add_argument('--rm_d_model', type=int, default=512, help='the dimension of rm.')
-
     # Sample related
     parser.add_argument('--sample_method', type=str, default='beam_search', help='the sample methods to sample a report.')
     parser.add_argument('--beam_size', type=int, default=3, help='the beam size when beam searching.')
@@ -110,13 +108,13 @@ def main():
     tokenizer = Tokenizer(args)
 
     # create data loader
-    test_dataloader = R2DataLoader(args, tokenizer, split='finetune', shuffle=False) #ideally it should be 'test'
-    train_dataloader = R2DataLoader(args, tokenizer, split='train', shuffle=False) 
+    #test_dataloader = R2DataLoader(args, tokenizer, split='finetune', shuffle=False) #ideally it should be 'test'
+    #train_dataloader = R2DataLoader(args, tokenizer, split='train', shuffle=False) 
     surrogate_dataloader = R2DataLoader(args, tokenizer, split='test', shuffle=False) 
 
     # build model architecture
     model = R2GenModel(args, tokenizer)
-    #print(model)
+    print(model)
     # get function handles of loss and metrics
     criterion = compute_loss
     metrics = compute_scores
